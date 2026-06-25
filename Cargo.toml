@@ -1,0 +1,8 @@
+[package]
+name = "mew-rust"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ash-window = "0.12.0"
+ash = { version = "0.38.0", default-features = false, features = ["linked", "debug", "std"] }
