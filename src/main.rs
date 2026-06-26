@@ -662,15 +662,19 @@ fn update_swapchain(state: &mut State) {
     state.swapchain_image_views.clear();
     state.swapchain_images.clear();
 
-    unsafe {
-        state
-            .swapchain_loader
-            .destroy_swapchain(state.swapchain, None);
+    let old_swapchain_handle = state.swapchain;
+    state.swapchain_create_info.old_swapchain = old_swapchain_handle;
 
+    unsafe {
         state.swapchain = state
             .swapchain_loader
             .create_swapchain(&state.swapchain_create_info, None)
             .unwrap();
+
+        state
+            .swapchain_loader
+            .destroy_swapchain(old_swapchain_handle, None);
+
     }
 
     state.swapchain_images = unsafe {
