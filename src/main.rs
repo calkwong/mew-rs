@@ -146,7 +146,12 @@ impl State {
                                             surface,
                                         )
                                         .unwrap();
-                            if supports_graphic_and_surface {
+
+                            let prop = instance.get_physical_device_properties(*pdevice);
+                            let is_discrete_gpu =
+                                prop.device_type == vk::PhysicalDeviceType::DISCRETE_GPU;
+
+                            if supports_graphic_and_surface && is_discrete_gpu {
                                 Some((*pdevice, index))
                             } else {
                                 None
@@ -155,6 +160,7 @@ impl State {
                 })
                 .expect("Couldn't find suitable device")
         };
+
         let queue_family_index = queue_family_index as u32;
         let device_extension_names_raw = [swapchain::NAME.as_ptr()];
         let priorities = [1.0];
