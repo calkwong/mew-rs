@@ -18,12 +18,13 @@ use winit::{
 
 const FRAMES_IN_FLIGHT: usize = 1;
 
-// TODO: implement Drop and exiting()
 #[allow(dead_code)]
 struct State {
     window: Window,
     entry: Entry,
     instance: Instance,
+    surface: vk::SurfaceKHR,
+    surface_loader: surface::Instance,
     device: Device,
     queue_family_index: u32,
     graphics_queue: Queue,
@@ -330,6 +331,8 @@ impl State {
             window,
             entry,
             instance,
+            surface,
+            surface_loader,
             device,
             queue_family_index,
             graphics_queue,
@@ -353,6 +356,43 @@ impl State {
     }
 }
 
+impl Drop for State {
+    fn drop(&mut self) {
+        unsafe {
+            self.device.device_wait_idle().unwrap();
+
+            self.swapchain_loader
+                .destroy_swapchain(self.swapchain, None);
+
+            self.swapchain_image_views.iter().for_each(|image_view| {
+                self.device.destroy_image_view(*image_view, None);
+            });
+
+            self.command_pools.iter().for_each(|pool| {
+                self.device.destroy_command_pool(*pool, None);
+            });
+
+            self.fences.iter().for_each(|fence| {
+                self.device.destroy_fence(*fence, None);
+            });
+
+            self.render_done_semaphores.iter().for_each(|semaphore| {
+                self.device.destroy_semaphore(*semaphore, None);
+            });
+
+            self.image_acquired_semaphores.iter().for_each(|semaphore| {
+                self.device.destroy_semaphore(*semaphore, None);
+            });
+
+            self.surface_loader.destroy_surface(self.surface, None);
+            self.device.destroy_device(None);
+            self.debug_utils_loader
+                .destroy_debug_utils_messenger(self.debug_callback, None);
+            self.instance.destroy_instance(None);
+        }
+    }
+}
+
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let window_width: u32 = 1700;
@@ -373,17 +413,6 @@ impl ApplicationHandler for App {
         );
 
         self.state = Some(State::new(window));
-
-        // TODO: move to exiting() and impl Drop
-        // swapchain_loader.destroy_swapchain(swapchain, None);
-        // swapchain_image_views.iter().for_each(|image_view| {
-        //     device.destroy_image_view(*image_view, None);
-        // });
-        // device.destroy_command_pool(command_pool, None);
-        // surface_loader.destroy_surface(surface, None);
-        // device.destroy_device(None);
-        // debug_utils_loader.destroy_debug_utils_messenger(debug_callback, None);
-        // instance.destroy_instance(None);
 
         // TODO: wrap this block in Some(...)?
         println!("Does this execute once only?");
@@ -492,7 +521,6 @@ fn render_loop(state: &State) {
                 swapchain_idx = present_idx as usize;
             }
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
-                println!("Swapchain out of date");
                 let mut swapchain_dirty = state.swapchain_dirty.borrow_mut();
                 *swapchain_dirty = true;
                 return;
@@ -576,7 +604,6 @@ fn render_loop(state: &State) {
         match present_result {
             Ok(_) => {}
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
-                println!("Present out of date");
                 let mut swapchain_dirty = state.swapchain_dirty.borrow_mut();
                 *swapchain_dirty = true;
                 return;
