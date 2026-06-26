@@ -245,17 +245,31 @@ impl ApplicationHandler for App {
                                 base_mip_level: 0,
                                 level_count: 1,
                                 base_array_layer: 0,
-                                layer_count: 1
+                                layer_count: 1,
                             });
                         device.create_image_view(&image_view_info, None).unwrap()
                     })
                     .collect();
+
+                let command_pool_info =
+                    vk::CommandPoolCreateInfo::default().queue_family_index(queue_family_index);
+                let command_pool = device
+                    .create_command_pool(&command_pool_info, None)
+                    .unwrap();
+                let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::default()
+                    .command_pool(command_pool)
+                    .level(vk::CommandBufferLevel::PRIMARY)
+                    .command_buffer_count(1);
+                let command_buffers = device
+                    .allocate_command_buffers(&command_buffer_allocate_info)
+                    .unwrap();
 
                 // TODO: move to exiting() and impl Drop
                 swapchain_loader.destroy_swapchain(swapchain, None);
                 swapchain_image_views.iter().for_each(|image_view| {
                     device.destroy_image_view(*image_view, None);
                 });
+                device.destroy_command_pool(command_pool, None);
                 surface_loader.destroy_surface(surface, None);
                 device.destroy_device(None);
                 debug_utils_loader.destroy_debug_utils_messenger(debug_call_back, None);
