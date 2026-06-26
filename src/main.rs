@@ -185,11 +185,27 @@ impl State {
         // TODO: handle grabbing dGPU
         let graphics_queue = unsafe { device.get_device_queue(queue_family_index, 0) };
 
-        // TODO: do we want to be selecting a surface format here?
-        let surface_format = unsafe {
+        let surface_formats = unsafe {
             surface_loader
                 .get_physical_device_surface_formats(pdevice, surface)
-                .unwrap()[0]
+                .unwrap()
+        };
+
+        let mut found_format: Option<vk::SurfaceFormatKHR> = None;
+        for formats in &surface_formats {
+            // if formats.format == vk::Format::B8G8R8A8_UNORM
+            if formats.format == vk::Format::B8G8R8A8_SRGB
+                && formats.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
+            {
+                found_format = Some(*formats);
+                break;
+            }
+        }
+
+        let surface_format = if let Some(format) = found_format {
+            format
+        } else {
+            surface_formats[0]
         };
 
         let surface_capabilities = unsafe {
