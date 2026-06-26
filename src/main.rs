@@ -226,8 +226,36 @@ impl ApplicationHandler for App {
                     .create_swapchain(&swapchain_create_info, None)
                     .unwrap();
 
+                let swapchain_images = swapchain_loader.get_swapchain_images(swapchain).unwrap();
+                let swapchain_image_views: Vec<vk::ImageView> = swapchain_images
+                    .iter()
+                    .map(|&image| {
+                        let image_view_info = vk::ImageViewCreateInfo::default()
+                            .image(image)
+                            .view_type(vk::ImageViewType::TYPE_2D)
+                            .format(surface_format.format)
+                            .components(vk::ComponentMapping {
+                                r: vk::ComponentSwizzle::R,
+                                g: vk::ComponentSwizzle::G,
+                                b: vk::ComponentSwizzle::B,
+                                a: vk::ComponentSwizzle::A,
+                            })
+                            .subresource_range(vk::ImageSubresourceRange {
+                                aspect_mask: vk::ImageAspectFlags::COLOR,
+                                base_mip_level: 0,
+                                level_count: 1,
+                                base_array_layer: 0,
+                                layer_count: 1
+                            });
+                        device.create_image_view(&image_view_info, None).unwrap()
+                    })
+                    .collect();
+
                 // TODO: move to exiting() and impl Drop
                 swapchain_loader.destroy_swapchain(swapchain, None);
+                swapchain_image_views.iter().for_each(|image_view| {
+                    device.destroy_image_view(*image_view, None);
+                });
                 surface_loader.destroy_surface(surface, None);
                 device.destroy_device(None);
                 debug_utils_loader.destroy_debug_utils_messenger(debug_call_back, None);
@@ -268,11 +296,7 @@ impl ApplicationHandler for App {
 fn main() {
     let event_loop = EventLoop::new().unwrap();
 
-    event_loop
-        .run_app(&mut App {
-            window: None,
-        })
-        .unwrap();
+    event_loop.run_app(&mut App { window: None }).unwrap();
 
     println!("Exiting app");
 }
