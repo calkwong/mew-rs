@@ -29,6 +29,7 @@ struct State {
     graphics_queue: Queue,
     swapchain_loader: swapchain::Device,
     swapchain: SwapchainKHR,
+    swapchain_create_info: vk::SwapchainCreateInfoKHR<'static>,
     swapchain_images: Vec<vk::Image>,
     swapchain_image_views: Vec<vk::ImageView>,
     swapchain_dirty: RefCell<bool>,
@@ -159,12 +160,11 @@ impl State {
 
         let queue_create_info = vk::DeviceQueueCreateInfo::default()
             .queue_family_index(queue_family_index)
-            .queue_priorities(&priorities); // TODO
+            .queue_priorities(&priorities);
 
         let mut queue_infos: Vec<DeviceQueueCreateInfo> = Vec::new();
         queue_infos.push(queue_create_info);
 
-        // TODO: check for extension support
         let vulkan_1_0_features = vk::PhysicalDeviceFeatures::default();
         let mut vulkan_1_3_features =
             vk::PhysicalDeviceVulkan13Features::default().synchronization2(true);
@@ -181,7 +181,7 @@ impl State {
                 .unwrap()
         };
 
-        // TODO: verify
+        // TODO: handle grabbing dGPU
         let graphics_queue = unsafe { device.get_device_queue(queue_family_index, 0) };
 
         // TODO: do we want to be selecting a surface format here?
@@ -197,7 +197,6 @@ impl State {
                 .unwrap()
         };
 
-        // TODO: cross reference mew-engine
         let mut desired_image_count = surface_capabilities.min_image_count + 1;
         if surface_capabilities.max_image_count > 0
             && desired_image_count > surface_capabilities.max_image_count
@@ -336,6 +335,7 @@ impl State {
             graphics_queue,
             swapchain_loader,
             swapchain,
+            swapchain_create_info,
             swapchain_images,
             swapchain_image_views,
             swapchain_dirty: RefCell::new(false),
@@ -363,6 +363,7 @@ impl ApplicationHandler for App {
                 .create_window(
                     Window::default_attributes()
                         .with_title("window: mew-rust")
+                        .with_resizable(true)
                         .with_inner_size(winit::dpi::LogicalSize::new(
                             f64::from(window_width),
                             f64::from(window_height),
@@ -384,10 +385,10 @@ impl ApplicationHandler for App {
         // debug_utils_loader.destroy_debug_utils_messenger(debug_callback, None);
         // instance.destroy_instance(None);
 
+        // TODO: wrap this block in Some(...)?
         println!("Does this execute once only?");
     }
 
-    // TODO: refactor when we have actual window, currently force exit required
     fn window_event(
         &mut self,
         event_loop: &ActiveEventLoop,
@@ -395,13 +396,31 @@ impl ApplicationHandler for App {
         event: WindowEvent,
     ) {
         match event {
+            winit::event::WindowEvent::Resized(new_size) => {
+                if let Some(state) = self.state.as_mut() {
+                    state.swapchain_create_info.image_extent = vk::Extent2D {
+                        width: new_size.width,
+                        height: new_size.height,
+                    };
+                    update_swapchain(state);
+                    println!("Resize swapchain driven by WindowEvent::Resized");
+                }
+            }
             winit::event::WindowEvent::RedrawRequested => {
                 if let Some(state) = self.state.as_mut() {
-                    if *state.swapchain_dirty.borrow() {
-                        update_swapchain(state);
-                    }
-
                     render_loop(state);
+
+                    if *state.swapchain_dirty.borrow() {
+                        let new_size = state.window.inner_size();
+                        state.swapchain_create_info.image_extent = vk::Extent2D {
+                            width: new_size.width,
+                            height: new_size.height,
+                        };
+
+                        update_swapchain(state);
+                        *state.swapchain_dirty.borrow_mut() = false;
+                        println!("Resize swapchain driven by ERROR_OUT_OF_DATE_KHR");
+                    }
                 }
             }
             winit::event::WindowEvent::KeyboardInput {
@@ -416,9 +435,7 @@ impl ApplicationHandler for App {
             } => {
                 event_loop.exit();
             }
-            _ => {
-                println!("Looping forever");
-            }
+            _ => {}
         }
     }
 
@@ -429,17 +446,7 @@ impl ApplicationHandler for App {
     }
 }
 
-fn main() {
-    let event_loop = EventLoop::new().unwrap();
-
-    event_loop.set_control_flow(ControlFlow::Poll);
-    event_loop.run_app(&mut App { state: None }).unwrap();
-
-    println!("Exiting app");
-}
-
 fn render_loop(state: &State) {
-    // TODO: look up RefCell further
     let current_index = *state.frame_index.borrow() % FRAMES_IN_FLIGHT;
 
     let fence = state.fences[current_index];
@@ -451,7 +458,10 @@ fn render_loop(state: &State) {
 
         state
             .device
-            .reset_command_pool(state.command_pools[current_index], vk::CommandPoolResetFlags::empty())
+            .reset_command_pool(
+                state.command_pools[current_index],
+                vk::CommandPoolResetFlags::empty(),
+            )
             .unwrap();
     }
 
@@ -581,7 +591,69 @@ fn render_loop(state: &State) {
     *new_frame_index += 1;
 }
 
-fn update_swapchain(_state: &State) {}
+fn update_swapchain(state: &mut State) {
+    unsafe {
+        state.device.device_wait_idle().unwrap();
+    }
+
+    state
+        .swapchain_image_views
+        .iter()
+        .for_each(|image_view| unsafe {
+            state.device.destroy_image_view(*image_view, None);
+        });
+
+    state.swapchain_image_views.clear();
+    state.swapchain_images.clear();
+
+    unsafe {
+        state
+            .swapchain_loader
+            .destroy_swapchain(state.swapchain, None);
+
+        state.swapchain = state
+            .swapchain_loader
+            .create_swapchain(&state.swapchain_create_info, None)
+            .unwrap();
+    }
+
+    state.swapchain_images = unsafe {
+        state
+            .swapchain_loader
+            .get_swapchain_images(state.swapchain)
+            .unwrap()
+    };
+
+    state.swapchain_image_views = state
+        .swapchain_images
+        .iter()
+        .map(|&image| {
+            let image_view_info = vk::ImageViewCreateInfo::default()
+                .image(image)
+                .view_type(vk::ImageViewType::TYPE_2D)
+                .format(state.swapchain_create_info.image_format)
+                .components(vk::ComponentMapping {
+                    r: vk::ComponentSwizzle::R,
+                    g: vk::ComponentSwizzle::G,
+                    b: vk::ComponentSwizzle::B,
+                    a: vk::ComponentSwizzle::A,
+                })
+                .subresource_range(vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                });
+            unsafe {
+                state
+                    .device
+                    .create_image_view(&image_view_info, None)
+                    .unwrap()
+            }
+        })
+        .collect();
+}
 
 unsafe extern "system" fn vulkan_debug_callback(
     message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
@@ -612,4 +684,11 @@ unsafe extern "system" fn vulkan_debug_callback(
     );
 
     vk::FALSE
+}
+
+fn main() {
+    let event_loop = EventLoop::new().unwrap();
+
+    event_loop.set_control_flow(ControlFlow::Poll);
+    event_loop.run_app(&mut App { state: None }).unwrap();
 }
