@@ -359,8 +359,6 @@ impl State {
 impl Drop for State {
     fn drop(&mut self) {
         unsafe {
-            self.device.device_wait_idle().unwrap();
-
             self.swapchain_loader
                 .destroy_swapchain(self.swapchain, None);
 
@@ -472,6 +470,14 @@ impl ApplicationHandler for App {
         if let Some(state) = self.state.as_mut() {
             state.window.request_redraw();
         }
+    }
+
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        if let Some(state) = self.state.as_mut() {
+            unsafe { state.device.device_wait_idle().unwrap() };
+        }
+
+        self.state = None;
     }
 }
 
