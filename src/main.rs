@@ -205,12 +205,12 @@ impl State {
             desired_image_count = surface_capabilities.max_image_count;
         }
 
-        let window_width: u32 = 1700;
-        let window_height: u32 = 900;
+        let window_size = window.inner_size();
+
         let surface_resolution = match surface_capabilities.current_extent.width {
             u32::MAX => vk::Extent2D {
-                width: window_width,
-                height: window_height,
+                width: window_size.width,
+                height: window_size.height,
             },
             _ => surface_capabilities.current_extent,
         };
@@ -257,9 +257,9 @@ impl State {
         let swapchain_images = unsafe { swapchain_loader.get_swapchain_images(swapchain).unwrap() };
         let swapchain_image_views: Vec<vk::ImageView> = swapchain_images
             .iter()
-            .map(|&image| {
+            .map(|image| {
                 let image_view_info = vk::ImageViewCreateInfo::default()
-                    .image(image)
+                    .image(*image)
                     .view_type(vk::ImageViewType::TYPE_2D)
                     .format(surface_format.format)
                     .components(vk::ComponentMapping {
@@ -393,6 +393,10 @@ impl Drop for State {
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if let Some(_) = self.state.as_ref() {
+            return;
+        }
+
         let window_width: u32 = 1700;
         let window_height: u32 = 900;
 
@@ -411,9 +415,6 @@ impl ApplicationHandler for App {
         );
 
         self.state = Some(State::new(window));
-
-        // TODO: wrap this block in Some(...)?
-        println!("Does this execute once only?");
     }
 
     fn window_event(
@@ -430,7 +431,7 @@ impl ApplicationHandler for App {
                         height: new_size.height,
                     };
                     update_swapchain(state);
-                    println!("Resize swapchain driven by WindowEvent::Resized");
+                    // println!("Resize swapchain driven by WindowEvent::Resized");
                 }
             }
             winit::event::WindowEvent::RedrawRequested => {
@@ -446,7 +447,7 @@ impl ApplicationHandler for App {
 
                         update_swapchain(state);
                         *state.swapchain_dirty.borrow_mut() = false;
-                        println!("Resize swapchain driven by ERROR_OUT_OF_DATE_KHR");
+                        // println!("Resize swapchain driven by ERROR_OUT_OF_DATE_KHR");
                     }
                 }
             }
@@ -467,13 +468,13 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(state) = self.state.as_mut() {
+        if let Some(state) = self.state.as_ref() {
             state.window.request_redraw();
         }
     }
 
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(state) = self.state.as_mut() {
+        if let Some(state) = self.state.as_ref() {
             unsafe { state.device.device_wait_idle().unwrap() };
         }
 
