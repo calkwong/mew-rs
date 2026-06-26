@@ -2,18 +2,21 @@ use ash::{
     Device, Entry, Instance,
     ext::debug_utils,
     khr::{surface, swapchain},
-    vk::{self, DebugUtilsMessengerEXT, DeviceQueueCreateInfo, Queue},
+    vk::{
+        self, DebugUtilsMessengerEXT, DeviceQueueCreateInfo, Fence, Queue, Semaphore, SwapchainKHR,
+    },
 };
 use ash_window;
+use std::{borrow::Cow, cell::RefCell, ffi, os::raw::c_char};
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
-    event_loop::{ActiveEventLoop, EventLoop},
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     raw_window_handle::{HasDisplayHandle, HasWindowHandle},
     window::{Window, WindowId},
 };
 
-use std::{borrow::Cow, ffi, os::raw::c_char};
+const FRAMES_IN_FLIGHT: usize = 1;
 
 // TODO: implement Drop and exiting()
 #[allow(dead_code)]
@@ -24,12 +27,19 @@ struct State {
     device: Device,
     queue_family_index: u32,
     graphics_queue: Queue,
+    swapchain_loader: swapchain::Device,
+    swapchain: SwapchainKHR,
     swapchain_images: Vec<vk::Image>,
     swapchain_image_views: Vec<vk::ImageView>,
-    command_pool: vk::CommandPool,
+    swapchain_dirty: RefCell<bool>,
+    command_pools: Vec<vk::CommandPool>,
     command_buffers: Vec<vk::CommandBuffer>,
     debug_utils_loader: debug_utils::Instance,
     debug_callback: DebugUtilsMessengerEXT,
+    fences: Vec<Fence>,
+    render_done_semaphores: Vec<Semaphore>,
+    image_acquired_semaphores: Vec<Semaphore>,
+    frame_index: RefCell<usize>,
 }
 
 struct App {
@@ -145,7 +155,6 @@ impl State {
         };
         let queue_family_index = queue_family_index as u32;
         let device_extension_names_raw = [swapchain::NAME.as_ptr()];
-        let features = vk::PhysicalDeviceFeatures::default();
         let priorities = [1.0];
 
         let queue_create_info = vk::DeviceQueueCreateInfo::default()
@@ -155,11 +164,16 @@ impl State {
         let mut queue_infos: Vec<DeviceQueueCreateInfo> = Vec::new();
         queue_infos.push(queue_create_info);
 
-        // TODO: features and extensions
+        // TODO: check for extension support
+        let vulkan_1_0_features = vk::PhysicalDeviceFeatures::default();
+        let mut vulkan_1_3_features =
+            vk::PhysicalDeviceVulkan13Features::default().synchronization2(true);
+
         let device_create_info = vk::DeviceCreateInfo::default()
             .queue_create_infos(&queue_infos)
             .enabled_extension_names(&device_extension_names_raw)
-            .enabled_features(&features);
+            .enabled_features(&vulkan_1_0_features)
+            .push_next(&mut vulkan_1_3_features);
 
         let device = unsafe {
             instance
@@ -267,19 +281,50 @@ impl State {
 
         let command_pool_info =
             vk::CommandPoolCreateInfo::default().queue_family_index(queue_family_index);
-        let command_pool = unsafe {
-            device
-                .create_command_pool(&command_pool_info, None)
-                .unwrap()
+        let command_pools: Vec<vk::CommandPool> = unsafe {
+            (0..FRAMES_IN_FLIGHT)
+                .map(|_| {
+                    device
+                        .create_command_pool(&command_pool_info, None)
+                        .unwrap()
+                })
+                .collect()
         };
-        let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::default()
-            .command_pool(command_pool)
-            .level(vk::CommandBufferLevel::PRIMARY)
-            .command_buffer_count(1);
-        let command_buffers = unsafe {
-            device
-                .allocate_command_buffers(&command_buffer_allocate_info)
-                .unwrap()
+
+        let command_buffers: Vec<vk::CommandBuffer> = command_pools
+            .iter()
+            .map(|pool| unsafe {
+                let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::default()
+                    .command_pool(*pool)
+                    .level(vk::CommandBufferLevel::PRIMARY)
+                    .command_buffer_count(1);
+
+                // note: a single command buffer per command pool
+                device
+                    .allocate_command_buffers(&command_buffer_allocate_info)
+                    .unwrap()[0]
+            })
+            .collect();
+
+        let fence_info = vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
+
+        let fences = unsafe {
+            (0..FRAMES_IN_FLIGHT)
+                .map(|_| device.create_fence(&fence_info, None).unwrap())
+                .collect()
+        };
+
+        let semaphore_info = vk::SemaphoreCreateInfo::default();
+        let render_done_semaphores: Vec<vk::Semaphore> = unsafe {
+            (0..swapchain_images.len())
+                .map(|_| device.create_semaphore(&semaphore_info, None).unwrap())
+                .collect()
+        };
+
+        let image_acquired_semaphores: Vec<vk::Semaphore> = unsafe {
+            (0..FRAMES_IN_FLIGHT)
+                .map(|_| device.create_semaphore(&semaphore_info, None).unwrap())
+                .collect()
         };
 
         let this = Self {
@@ -289,12 +334,19 @@ impl State {
             device,
             queue_family_index,
             graphics_queue,
+            swapchain_loader,
+            swapchain,
             swapchain_images,
             swapchain_image_views,
-            command_pool,
+            swapchain_dirty: RefCell::new(false),
+            command_pools,
             command_buffers,
             debug_utils_loader,
             debug_callback,
+            fences,
+            render_done_semaphores,
+            image_acquired_semaphores,
+            frame_index: RefCell::new(0),
         };
 
         this
@@ -343,6 +395,15 @@ impl ApplicationHandler for App {
         event: WindowEvent,
     ) {
         match event {
+            winit::event::WindowEvent::RedrawRequested => {
+                if let Some(state) = self.state.as_mut() {
+                    if *state.swapchain_dirty.borrow() {
+                        update_swapchain(state);
+                    }
+
+                    render_loop(state);
+                }
+            }
             winit::event::WindowEvent::KeyboardInput {
                 event:
                     winit::event::KeyEvent {
@@ -360,19 +421,167 @@ impl ApplicationHandler for App {
             }
         }
     }
+
+    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+        if let Some(state) = self.state.as_mut() {
+            state.window.request_redraw();
+        }
+    }
 }
 
 fn main() {
     let event_loop = EventLoop::new().unwrap();
 
-    event_loop
-        .run_app(&mut App {
-            state: None,
-        })
-        .unwrap();
+    event_loop.set_control_flow(ControlFlow::Poll);
+    event_loop.run_app(&mut App { state: None }).unwrap();
 
     println!("Exiting app");
 }
+
+fn render_loop(state: &State) {
+    // TODO: look up RefCell further
+    let current_index = *state.frame_index.borrow() % FRAMES_IN_FLIGHT;
+
+    let fence = state.fences[current_index];
+    unsafe {
+        state
+            .device
+            .wait_for_fences(&[fence], true, u64::MAX)
+            .unwrap();
+
+        state
+            .device
+            .reset_command_pool(state.command_pools[current_index], vk::CommandPoolResetFlags::empty())
+            .unwrap();
+    }
+
+    let cmd = state.command_buffers[current_index];
+    let cmd_begin_info =
+        vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+
+    unsafe {
+        state
+            .device
+            .begin_command_buffer(cmd, &cmd_begin_info)
+            .unwrap()
+    };
+
+    let acquire_semaphore = state.image_acquired_semaphores[current_index];
+
+    let swapchain_idx: usize;
+    unsafe {
+        let acquire_result = state.swapchain_loader.acquire_next_image(
+            state.swapchain,
+            u64::MAX,
+            acquire_semaphore,
+            vk::Fence::null(),
+        );
+
+        match acquire_result {
+            Ok((present_idx, _)) => {
+                swapchain_idx = present_idx as usize;
+            }
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
+                println!("Swapchain out of date");
+                let mut swapchain_dirty = state.swapchain_dirty.borrow_mut();
+                *swapchain_dirty = true;
+                return;
+            }
+            Err(e) => {
+                panic!("Failed to acquire next image: {e:?}");
+            }
+        }
+
+        state.device.reset_fences(&[fence]).unwrap();
+    }
+
+    let image_memory_barrier = vk::ImageMemoryBarrier2::default()
+        .image(state.swapchain_images[swapchain_idx])
+        .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+        .src_access_mask(vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE)
+        .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+        .dst_access_mask(vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE)
+        .subresource_range(vk::ImageSubresourceRange {
+            aspect_mask: vk::ImageAspectFlags::COLOR,
+            base_mip_level: 0,
+            level_count: 1,
+            base_array_layer: 0,
+            layer_count: 1,
+        })
+        .old_layout(vk::ImageLayout::UNDEFINED)
+        .new_layout(vk::ImageLayout::PRESENT_SRC_KHR);
+    let image_memory_barrier = [image_memory_barrier];
+
+    let dependency_info =
+        vk::DependencyInfo::default().image_memory_barriers(&image_memory_barrier);
+
+    unsafe { state.device.cmd_pipeline_barrier2(cmd, &dependency_info) };
+
+    unsafe {
+        state.device.end_command_buffer(cmd).unwrap();
+    }
+
+    let cmd_submit_info = vk::CommandBufferSubmitInfo::default().command_buffer(cmd);
+
+    let semaphore_wait_info = vk::SemaphoreSubmitInfo::default()
+        .semaphore(acquire_semaphore)
+        .value(1)
+        .stage_mask(vk::PipelineStageFlags2::ALL_GRAPHICS);
+
+    let render_semaphore = state.render_done_semaphores[swapchain_idx];
+    let semaphore_signal_info = vk::SemaphoreSubmitInfo::default()
+        .semaphore(render_semaphore)
+        .value(1)
+        .stage_mask(vk::PipelineStageFlags2::ALL_GRAPHICS);
+
+    let render_semaphore = [render_semaphore];
+    let semaphore_signal_info = [semaphore_signal_info];
+    let semaphore_wait_info = [semaphore_wait_info];
+    let cmd_submit_info = [cmd_submit_info];
+    let swapchain_idx = [swapchain_idx as u32];
+    let swapchain = [state.swapchain];
+
+    let submit_info = vk::SubmitInfo2::default()
+        .signal_semaphore_infos(&semaphore_signal_info)
+        .wait_semaphore_infos(&semaphore_wait_info)
+        .command_buffer_infos(&cmd_submit_info);
+
+    unsafe {
+        state
+            .device
+            .queue_submit2(state.graphics_queue, &[submit_info], fence)
+            .unwrap();
+    }
+
+    let present_info = vk::PresentInfoKHR::default()
+        .wait_semaphores(&render_semaphore)
+        .image_indices(&swapchain_idx)
+        .swapchains(&swapchain);
+
+    unsafe {
+        let present_result = state
+            .swapchain_loader
+            .queue_present(state.graphics_queue, &present_info);
+
+        match present_result {
+            Ok(_) => {}
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
+                println!("Present out of date");
+                let mut swapchain_dirty = state.swapchain_dirty.borrow_mut();
+                *swapchain_dirty = true;
+                return;
+            }
+            Err(e) => {
+                panic!("Present error: {e:?}");
+            }
+        }
+    };
+
+    let mut new_frame_index = state.frame_index.borrow_mut();
+    *new_frame_index += 1;
+}
+
+fn update_swapchain(_state: &State) {}
 
 unsafe extern "system" fn vulkan_debug_callback(
     message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
