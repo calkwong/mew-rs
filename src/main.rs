@@ -32,7 +32,8 @@ struct State {
     graphics_queue: Queue,
     allocator: ManuallyDrop<Allocator>,
     image_allocation: Allocation,
-    image: vk::Image,
+    draw_image: vk::Image,
+    draw_image_view: vk::ImageView,
     swapchain_loader: swapchain::Device,
     swapchain: SwapchainKHR,
     swapchain_create_info: vk::SwapchainCreateInfoKHR<'static>,
@@ -341,8 +342,8 @@ impl State {
             .usage(vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_SRC)
             .samples(vk::SampleCountFlags::TYPE_1);
 
-        let image = unsafe { device.create_image(&image_create_info, None).unwrap() };
-        let requirements = unsafe { device.get_image_memory_requirements(image) };
+        let draw_image = unsafe { device.create_image(&image_create_info, None).unwrap() };
+        let requirements = unsafe { device.get_image_memory_requirements(draw_image) };
 
         let image_allocation = allocator
             .allocate(&AllocationCreateDesc {
@@ -356,9 +357,33 @@ impl State {
 
         unsafe {
             device
-                .bind_image_memory(image, image_allocation.memory(), image_allocation.offset())
+                .bind_image_memory(
+                    draw_image,
+                    image_allocation.memory(),
+                    image_allocation.offset(),
+                )
                 .unwrap()
         };
+
+        // TODO: create helper fn, and also create a Image container that holds allocation, vk::Image etc.
+        let image_view_info = vk::ImageViewCreateInfo::default()
+            .image(draw_image)
+            .view_type(vk::ImageViewType::TYPE_2D)
+            .format(vk::Format::R16G16B16A16_SFLOAT)
+            .components(vk::ComponentMapping {
+                r: vk::ComponentSwizzle::R,
+                g: vk::ComponentSwizzle::G,
+                b: vk::ComponentSwizzle::B,
+                a: vk::ComponentSwizzle::A,
+            })
+            .subresource_range(vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1,
+            });
+        let draw_image_view = unsafe { device.create_image_view(&image_view_info, None).unwrap() };
 
         let command_pool_info =
             vk::CommandPoolCreateInfo::default().queue_family_index(queue_family_index);
@@ -423,6 +448,22 @@ impl State {
         let descriptor_set =
             create_descriptor_sets(&device, descriptor_pool, descriptor_set_layout);
 
+        // TODO: create fn for write desc set
+        let image_info = vk::DescriptorImageInfo::default()
+            .image_layout(vk::ImageLayout::GENERAL)
+            .image_view(draw_image_view);
+        let image_info = [image_info];
+        let write = vk::WriteDescriptorSet::default()
+            .dst_set(descriptor_set)
+            .dst_binding(0)
+            .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+            .image_info(&image_info)
+            .descriptor_count(1);
+
+        unsafe {
+            device.update_descriptor_sets(&[write], &[]);
+        }
+
         // TODO: create fn for this, and account for push constant
         let descriptor_set_layouts = [descriptor_set_layout];
         let pipeline_layout_info =
@@ -456,7 +497,8 @@ impl State {
             graphics_queue,
             allocator: ManuallyDrop::new(allocator),
             image_allocation,
-            image,
+            draw_image,
+            draw_image_view,
             swapchain_loader,
             swapchain,
             swapchain_create_info,
@@ -512,12 +554,16 @@ impl Drop for State {
             // clean up allocator + resources
             let allocation = std::mem::take(&mut self.image_allocation);
             self.allocator.free(allocation).unwrap();
-            self.device.destroy_image(self.image, None);
+            self.device.destroy_image(self.draw_image, None);
+            self.device.destroy_image_view(self.draw_image_view, None);
             ManuallyDrop::drop(&mut self.allocator);
 
-            self.device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
-            self.device.destroy_descriptor_pool(self.descriptor_pool, None);
-            self.device.destroy_pipeline_layout(self.pipeline_layout, None);
+            self.device
+                .destroy_descriptor_set_layout(self.descriptor_set_layout, None);
+            self.device
+                .destroy_descriptor_pool(self.descriptor_pool, None);
+            self.device
+                .destroy_pipeline_layout(self.pipeline_layout, None);
             self.device.destroy_pipeline(self.pipeline, None);
 
             self.surface_loader.destroy_surface(self.surface, None);
@@ -940,10 +986,6 @@ fn create_compute_pipeline(
 
     pipelines[0]
 }
-
-/// Untested
-#[allow(dead_code)]
-fn write_descriptor_sets() {}
 
 fn main() {
     let event_loop = EventLoop::new().unwrap();
