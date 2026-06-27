@@ -1,0 +1,4 @@
+rule slang
+    command = slangc $in -o $out -target spirv -matrix-layout-column-major -fvk-use-entrypoint-name -Wno-39001
+
+build shaders/compiled/color.spv: slang shaders/color.slang
