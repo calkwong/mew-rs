@@ -866,7 +866,11 @@ fn create_descriptor_sets(
 
 /// Untested
 #[allow(dead_code)]
-fn create_compute_pipeline(device: Device, layout: vk::PipelineLayout, module: vk::ShaderModule) -> vk::Pipeline {
+fn create_compute_pipeline(
+    device: Device,
+    layout: vk::PipelineLayout,
+    module: vk::ShaderModule,
+) -> vk::Pipeline {
     let shader_stage_info = vk::PipelineShaderStageCreateInfo::default()
         .name(c"main")
         .module(module)
@@ -883,6 +887,28 @@ fn create_compute_pipeline(device: Device, layout: vk::PipelineLayout, module: v
     };
 
     pipelines[0]
+}
+
+/// Untested
+#[allow(dead_code)]
+fn load_shader_module(device: Device, path: &str) -> vk::ShaderModule {
+    let data = std::fs::read(path).unwrap();
+    let mut code: Vec<u32> = Vec::new();
+
+    // if last chunk is not exact, we can query the remainder
+    let mut iter = data.chunks_exact(4);
+    for chunk in &mut iter {
+        // tries to create an array by copying from a slice
+        let bytes: [u8; 4] = chunk.try_into().unwrap();
+        let word = u32::from_le_bytes(bytes);
+        code.push(word);
+    }
+
+    iter.next().expect("Spv is not a sequence of 4 bytes");
+
+    let create_info = vk::ShaderModuleCreateInfo::default().code(&code);
+
+    unsafe { device.create_shader_module(&create_info, None).unwrap() }
 }
 
 /// Untested
