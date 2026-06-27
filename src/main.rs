@@ -9,7 +9,7 @@ use ash::{
 use ash_window;
 use gpu_allocator::MemoryLocation;
 use gpu_allocator::vulkan::*;
-use std::{borrow::Cow, cell::RefCell, ffi, mem::ManuallyDrop, os::raw::c_char};
+use std::{borrow::Cow, cell::RefCell, ffi, io::Cursor, mem::ManuallyDrop, os::raw::c_char};
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
@@ -48,6 +48,11 @@ struct State {
     render_done_semaphores: Vec<Semaphore>,
     image_acquired_semaphores: Vec<Semaphore>,
     frame_index: RefCell<usize>,
+    pipeline: vk::Pipeline,
+    pipeline_layout: vk::PipelineLayout,
+    descriptor_set: vk::DescriptorSet,
+    descriptor_pool: vk::DescriptorPool,
+    descriptor_set_layout: vk::DescriptorSetLayout,
 }
 
 struct App {
@@ -403,6 +408,43 @@ impl State {
                 .collect()
         };
 
+        // TODO: descriptors
+        let pool_size = vk::DescriptorPoolSize {
+            ty: vk::DescriptorType::STORAGE_IMAGE,
+            descriptor_count: 1,
+        };
+        let descriptor_pool = create_descriptor_pool(&device, pool_size);
+        let binding = vk::DescriptorSetLayoutBinding::default()
+            .binding(0)
+            .descriptor_count(1)
+            .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+            .stage_flags(vk::ShaderStageFlags::ALL);
+        let descriptor_set_layout = create_descriptor_layouts(&device, binding);
+        let descriptor_set =
+            create_descriptor_sets(&device, descriptor_pool, descriptor_set_layout);
+
+        // TODO: create fn for this, and account for push constant
+        let descriptor_set_layouts = [descriptor_set_layout];
+        let pipeline_layout_info =
+            vk::PipelineLayoutCreateInfo::default().set_layouts(&descriptor_set_layouts);
+        let pipeline_layout = unsafe {
+            device
+                .create_pipeline_layout(&pipeline_layout_info, None)
+                .unwrap()
+        };
+
+        // taken from ash
+        let mut spv_file = Cursor::new(&include_bytes!("../shaders/compiled/color.spv")[..]);
+        let code = ash::util::read_spv(&mut spv_file).expect("Failed to read spv file");
+        let create_info = vk::ShaderModuleCreateInfo::default().code(&code);
+        let shader_module = unsafe { device.create_shader_module(&create_info, None).unwrap() };
+
+        let pipeline = create_compute_pipeline(&device, pipeline_layout, shader_module);
+
+        unsafe {
+            device.destroy_shader_module(shader_module, None);
+        }
+
         let this = Self {
             window,
             entry,
@@ -430,6 +472,11 @@ impl State {
             render_done_semaphores,
             image_acquired_semaphores,
             frame_index: RefCell::new(0),
+            pipeline,
+            pipeline_layout,
+            descriptor_set,
+            descriptor_pool,
+            descriptor_set_layout,
         };
 
         this
@@ -467,6 +514,11 @@ impl Drop for State {
             self.allocator.free(allocation).unwrap();
             self.device.destroy_image(self.image, None);
             ManuallyDrop::drop(&mut self.allocator);
+
+            self.device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
+            self.device.destroy_descriptor_pool(self.descriptor_pool, None);
+            self.device.destroy_pipeline_layout(self.pipeline_layout, None);
+            self.device.destroy_pipeline(self.pipeline, None);
 
             self.surface_loader.destroy_surface(self.surface, None);
             self.device.destroy_device(None);
@@ -867,7 +919,7 @@ fn create_descriptor_sets(
 /// Untested
 #[allow(dead_code)]
 fn create_compute_pipeline(
-    device: Device,
+    device: &Device,
     layout: vk::PipelineLayout,
     module: vk::ShaderModule,
 ) -> vk::Pipeline {
@@ -887,28 +939,6 @@ fn create_compute_pipeline(
     };
 
     pipelines[0]
-}
-
-/// Untested
-#[allow(dead_code)]
-fn load_shader_module(device: Device, path: &str) -> vk::ShaderModule {
-    let data = std::fs::read(path).unwrap();
-    let mut code: Vec<u32> = Vec::new();
-
-    // if last chunk is not exact, we can query the remainder
-    let mut iter = data.chunks_exact(4);
-    for chunk in &mut iter {
-        // tries to create an array by copying from a slice
-        let bytes: [u8; 4] = chunk.try_into().unwrap();
-        let word = u32::from_le_bytes(bytes);
-        code.push(word);
-    }
-
-    iter.next().expect("Spv is not a sequence of 4 bytes");
-
-    let create_info = vk::ShaderModuleCreateInfo::default().code(&code);
-
-    unsafe { device.create_shader_module(&create_info, None).unwrap() }
 }
 
 /// Untested
