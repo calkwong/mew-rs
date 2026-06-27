@@ -215,8 +215,8 @@ impl State {
 
         let mut found_format: Option<vk::SurfaceFormatKHR> = None;
         for formats in &surface_formats {
-            // if formats.format == vk::Format::B8G8R8A8_UNORM
-            if formats.format == vk::Format::B8G8R8A8_SRGB
+            if formats.format == vk::Format::B8G8R8A8_UNORM
+            // if formats.format == vk::Format::B8G8R8A8_SRGB // this does not support STORAGE usage
                 && formats.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
             {
                 found_format = Some(*formats);
@@ -278,7 +278,7 @@ impl State {
             .image_color_space(surface_format.color_space)
             .image_format(surface_format.format)
             .image_extent(surface_resolution)
-            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
+            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::STORAGE)
             .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
             .pre_transform(pre_transform)
             .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
@@ -724,7 +724,7 @@ fn render_loop(state: &State) {
         state.device.reset_fences(&[fence]).unwrap();
     }
 
-    let image_memory_barrier = vk::ImageMemoryBarrier2::default()
+    let mut image_memory_barrier = vk::ImageMemoryBarrier2::default()
         .image(state.swapchain_images[swapchain_idx])
         .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
         .src_access_mask(vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE)
@@ -738,12 +738,27 @@ fn render_loop(state: &State) {
             layer_count: 1,
         })
         .old_layout(vk::ImageLayout::UNDEFINED)
-        .new_layout(vk::ImageLayout::PRESENT_SRC_KHR);
-    let image_memory_barrier = [image_memory_barrier];
+        .new_layout(vk::ImageLayout::GENERAL);
 
-    let dependency_info =
-        vk::DependencyInfo::default().image_memory_barriers(&image_memory_barrier);
+    let mut image_memory_barriers: Vec<vk::ImageMemoryBarrier2> = Vec::new();
+    image_memory_barriers.push(image_memory_barrier);
+    // draw image
+    image_memory_barrier.image = state.draw_image;
+    image_memory_barrier.new_layout = vk::ImageLayout::GENERAL;
+    image_memory_barriers.push(image_memory_barrier);
 
+    let mut dependency_info =
+        vk::DependencyInfo::default().image_memory_barriers(&image_memory_barriers);
+    unsafe { state.device.cmd_pipeline_barrier2(cmd, &dependency_info) };
+
+    // transition to present
+    image_memory_barrier.image = state.swapchain_images[swapchain_idx];
+    image_memory_barrier.old_layout = vk::ImageLayout::GENERAL;
+    image_memory_barrier.new_layout = vk::ImageLayout::PRESENT_SRC_KHR;
+    image_memory_barriers.clear();
+    image_memory_barriers.push(image_memory_barrier);
+
+    dependency_info = vk::DependencyInfo::default().image_memory_barriers(&image_memory_barriers);
     unsafe { state.device.cmd_pipeline_barrier2(cmd, &dependency_info) };
 
     unsafe {
