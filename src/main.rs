@@ -866,6 +866,27 @@ fn create_descriptor_sets(
 
 /// Untested
 #[allow(dead_code)]
+fn create_compute_pipeline(device: Device, layout: vk::PipelineLayout, module: vk::ShaderModule) -> vk::Pipeline {
+    let shader_stage_info = vk::PipelineShaderStageCreateInfo::default()
+        .name(c"main")
+        .module(module)
+        .stage(vk::ShaderStageFlags::COMPUTE);
+
+    let pipeline_info = vk::ComputePipelineCreateInfo::default()
+        .layout(layout)
+        .stage(shader_stage_info);
+
+    let pipelines = unsafe {
+        device
+            .create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info], None)
+            .unwrap()
+    };
+
+    pipelines[0]
+}
+
+/// Untested
+#[allow(dead_code)]
 fn write_descriptor_sets() {}
 
 fn main() {
