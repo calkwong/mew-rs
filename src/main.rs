@@ -7,7 +7,9 @@ use ash::{
     },
 };
 use ash_window;
-use std::{borrow::Cow, cell::RefCell, ffi, os::raw::c_char};
+use gpu_allocator::MemoryLocation;
+use gpu_allocator::vulkan::*;
+use std::{borrow::Cow, cell::RefCell, ffi, mem::ManuallyDrop, os::raw::c_char};
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
@@ -28,11 +30,15 @@ struct State {
     device: Device,
     queue_family_index: u32,
     graphics_queue: Queue,
+    allocator: ManuallyDrop<Allocator>,
+    image_allocation: Allocation,
+    image: vk::Image,
     swapchain_loader: swapchain::Device,
     swapchain: SwapchainKHR,
     swapchain_create_info: vk::SwapchainCreateInfoKHR<'static>,
     swapchain_images: Vec<vk::Image>,
     swapchain_image_views: Vec<vk::ImageView>,
+    swapchain_extent: vk::Extent2D,
     swapchain_dirty: RefCell<bool>,
     command_pools: Vec<vk::CommandPool>,
     command_buffers: Vec<vk::CommandBuffer>,
@@ -173,13 +179,18 @@ impl State {
         queue_infos.push(queue_create_info);
 
         let vulkan_1_0_features = vk::PhysicalDeviceFeatures::default();
+        let mut vulkan_1_2_features =
+            vk::PhysicalDeviceVulkan12Features::default().buffer_device_address(true);
         let mut vulkan_1_3_features =
             vk::PhysicalDeviceVulkan13Features::default().synchronization2(true);
+
+        // TODO: extension support check
 
         let device_create_info = vk::DeviceCreateInfo::default()
             .queue_create_infos(&queue_infos)
             .enabled_extension_names(&device_extension_names_raw)
             .enabled_features(&vulkan_1_0_features)
+            .push_next(&mut vulkan_1_2_features)
             .push_next(&mut vulkan_1_3_features);
 
         let device = unsafe {
@@ -188,7 +199,6 @@ impl State {
                 .unwrap()
         };
 
-        // TODO: handle grabbing dGPU
         let graphics_queue = unsafe { device.get_device_queue(queue_family_index, 0) };
 
         let surface_formats = unsafe {
@@ -301,6 +311,50 @@ impl State {
             })
             .collect();
 
+        let swapchain_extent = surface_resolution;
+
+        let mut allocator = Allocator::new(&AllocatorCreateDesc {
+            instance: instance.clone(),
+            device: device.clone(),
+            physical_device: pdevice,
+            debug_settings: Default::default(),
+            buffer_device_address: true,
+            allocation_sizes: Default::default(),
+        })
+        .unwrap();
+
+        let image_create_info = vk::ImageCreateInfo::default()
+            .image_type(vk::ImageType::TYPE_2D)
+            .format(vk::Format::R16G16B16A16_SFLOAT)
+            .extent(vk::Extent3D {
+                width: swapchain_extent.width,
+                height: swapchain_extent.height,
+                depth: 1,
+            })
+            .mip_levels(1)
+            .array_layers(1)
+            .usage(vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_SRC)
+            .samples(vk::SampleCountFlags::TYPE_1);
+
+        let image = unsafe { device.create_image(&image_create_info, None).unwrap() };
+        let requirements = unsafe { device.get_image_memory_requirements(image) };
+
+        let image_allocation = allocator
+            .allocate(&AllocationCreateDesc {
+                name: "Example allocation",
+                requirements,
+                location: MemoryLocation::GpuOnly,
+                linear: false, // TODO: t/f?
+                allocation_scheme: AllocationScheme::GpuAllocatorManaged,
+            })
+            .unwrap();
+
+        unsafe {
+            device
+                .bind_image_memory(image, image_allocation.memory(), image_allocation.offset())
+                .unwrap()
+        };
+
         let command_pool_info =
             vk::CommandPoolCreateInfo::default().queue_family_index(queue_family_index);
         let command_pools: Vec<vk::CommandPool> = unsafe {
@@ -358,11 +412,15 @@ impl State {
             device,
             queue_family_index,
             graphics_queue,
+            allocator: ManuallyDrop::new(allocator),
+            image_allocation,
+            image,
             swapchain_loader,
             swapchain,
             swapchain_create_info,
             swapchain_images,
             swapchain_image_views,
+            swapchain_extent,
             swapchain_dirty: RefCell::new(false),
             command_pools,
             command_buffers,
@@ -403,6 +461,12 @@ impl Drop for State {
             self.image_acquired_semaphores.iter().for_each(|semaphore| {
                 self.device.destroy_semaphore(*semaphore, None);
             });
+
+            // clean up allocator + resources
+            let allocation = std::mem::take(&mut self.image_allocation);
+            self.allocator.free(allocation).unwrap();
+            self.device.destroy_image(self.image, None);
+            ManuallyDrop::drop(&mut self.allocator);
 
             self.surface_loader.destroy_surface(self.surface, None);
             self.device.destroy_device(None);
@@ -674,7 +738,6 @@ fn update_swapchain(state: &mut State) {
         state
             .swapchain_loader
             .destroy_swapchain(old_swapchain_handle, None);
-
     }
 
     state.swapchain_images = unsafe {
@@ -713,6 +776,8 @@ fn update_swapchain(state: &mut State) {
             }
         })
         .collect();
+
+    state.swapchain_extent = state.swapchain_create_info.image_extent;
 }
 
 unsafe extern "system" fn vulkan_debug_callback(
