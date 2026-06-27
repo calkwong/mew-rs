@@ -811,6 +811,63 @@ unsafe extern "system" fn vulkan_debug_callback(
     vk::FALSE
 }
 
+/// Untested
+#[allow(dead_code)]
+fn create_descriptor_pool(
+    device: &Device,
+    pool_size: vk::DescriptorPoolSize,
+) -> vk::DescriptorPool {
+    let pool_size = [pool_size];
+    let descriptor_pool_info = vk::DescriptorPoolCreateInfo::default()
+        .max_sets(1)
+        .pool_sizes(&pool_size);
+
+    unsafe {
+        device
+            .create_descriptor_pool(&descriptor_pool_info, None)
+            .unwrap()
+    }
+}
+
+/// Untested
+#[allow(dead_code)]
+fn create_descriptor_layouts(
+    device: &Device,
+    binding: vk::DescriptorSetLayoutBinding,
+) -> vk::DescriptorSetLayout {
+    let binding = [binding];
+    let layout_info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&binding);
+
+    unsafe {
+        device
+            .create_descriptor_set_layout(&layout_info, None)
+            .unwrap()
+    }
+}
+
+/// Untested
+#[allow(dead_code)]
+fn create_descriptor_sets(
+    device: &Device,
+    pool: vk::DescriptorPool,
+    layout: vk::DescriptorSetLayout,
+) -> vk::DescriptorSet {
+    let layout = [layout];
+    let descriptor_set_allocate_info = vk::DescriptorSetAllocateInfo::default()
+        .descriptor_pool(pool)
+        .set_layouts(&layout);
+
+    unsafe {
+        device
+            .allocate_descriptor_sets(&descriptor_set_allocate_info)
+            .unwrap()[0]
+    }
+}
+
+/// Untested
+#[allow(dead_code)]
+fn write_descriptor_sets() {}
+
 fn main() {
     let event_loop = EventLoop::new().unwrap();
 
