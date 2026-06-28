@@ -710,68 +710,15 @@ impl ApplicationHandler for App {
 
                     if state.swapchain_dirty {
                         let new_size = state.window.inner_size();
-                        state.swapchain_create_info.image_extent = vk::Extent2D {
-                            width: new_size.width,
-                            height: new_size.height,
-                        };
-
-                        update_swapchain(state);
-
-                        unsafe {
-                            state.device.destroy_image_view(state.draw_image_view, None);
+                        if new_size.width == state.swapchain_extent.width
+                            && new_size.height == state.swapchain_extent.height
+                        {
+                            state.swapchain_dirty = false;
+                            return;
                         }
 
-                        let image_view_info = vk::ImageViewCreateInfo::default()
-                            .image(state.draw_image)
-                            .view_type(vk::ImageViewType::TYPE_2D)
-                            .format(vk::Format::R16G16B16A16_SFLOAT)
-                            .components(vk::ComponentMapping {
-                                r: vk::ComponentSwizzle::R,
-                                g: vk::ComponentSwizzle::G,
-                                b: vk::ComponentSwizzle::B,
-                                a: vk::ComponentSwizzle::A,
-                            })
-                            .subresource_range(vk::ImageSubresourceRange {
-                                aspect_mask: vk::ImageAspectFlags::COLOR,
-                                base_mip_level: 0,
-                                level_count: 1,
-                                base_array_layer: 0,
-                                layer_count: 1,
-                            });
-                        state.draw_image_view = unsafe {
-                            state
-                                .device
-                                .create_image_view(&image_view_info, None)
-                                .unwrap()
-                        };
-
-                        let mut image_infos: Vec<vk::DescriptorImageInfo> =
-                            Vec::from([vk::DescriptorImageInfo::default()
-                                .image_layout(vk::ImageLayout::GENERAL)
-                                .image_view(state.draw_image_view)]);
-                        state.swapchain_image_views.iter().for_each(|image_view| {
-                            image_infos.push(
-                                vk::DescriptorImageInfo::default()
-                                    .image_layout(vk::ImageLayout::GENERAL)
-                                    .image_view(*image_view),
-                            );
-                        });
-                        let storage_image_descriptor_counts =
-                            state.swapchain_images.len() as u32 + 1;
-                        let storage_descriptor_write = vk::WriteDescriptorSet::default()
-                            .dst_set(state.descriptor_set)
-                            .dst_binding(0)
-                            .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
-                            .image_info(&image_infos)
-                            .descriptor_count(storage_image_descriptor_counts);
-                        unsafe {
-                            state
-                                .device
-                                .update_descriptor_sets(&[storage_descriptor_write], &[]);
-                        }
-
-                        state.swapchain_dirty = false;
-                        println!("Resize swapchain driven by ERROR_OUT_OF_DATE_KHR");
+                        // this definitely panics on x11
+                        todo!("Handle legitimate OUT_OF_DATE_KHR or SUBOPTIMAL_KHR");
                     }
                 }
             }
@@ -1112,8 +1059,6 @@ unsafe extern "system" fn vulkan_debug_callback(
     vk::FALSE
 }
 
-/// Untested
-#[allow(dead_code)]
 fn create_descriptor_pool(
     device: &Device,
     pool_size: vk::DescriptorPoolSize,
@@ -1130,8 +1075,6 @@ fn create_descriptor_pool(
     }
 }
 
-/// Untested
-#[allow(dead_code)]
 fn create_descriptor_layouts(
     device: &Device,
     binding: vk::DescriptorSetLayoutBinding,
@@ -1154,8 +1097,6 @@ fn create_descriptor_layouts(
     }
 }
 
-/// Untested
-#[allow(dead_code)]
 fn create_descriptor_sets(
     device: &Device,
     pool: vk::DescriptorPool,
@@ -1180,8 +1121,6 @@ fn create_descriptor_sets(
     }
 }
 
-/// Untested
-#[allow(dead_code)]
 fn create_compute_pipeline(
     device: &Device,
     layout: vk::PipelineLayout,
@@ -1281,6 +1220,10 @@ fn create_image(
 }
 
 fn main() {
+    /* unsafe {
+        std::env::remove_var("WAYLAND_DISPLAY");
+    } */
+
     let event_loop = EventLoop::new().unwrap();
 
     event_loop.set_control_flow(ControlFlow::Poll);
