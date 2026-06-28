@@ -40,7 +40,7 @@ struct State {
     swapchain_images: Vec<vk::Image>,
     swapchain_image_views: Vec<vk::ImageView>,
     swapchain_extent: vk::Extent2D,
-    swapchain_dirty: RefCell<bool>,
+    swapchain_dirty: RefCell<bool>, // TODO: can we not rely on interior mutability
     command_pools: Vec<vk::CommandPool>,
     command_buffers: Vec<vk::CommandBuffer>,
     debug_utils_loader: debug_utils::Instance,
@@ -48,7 +48,7 @@ struct State {
     fences: Vec<Fence>,
     render_done_semaphores: Vec<Semaphore>,
     image_acquired_semaphores: Vec<Semaphore>,
-    frame_index: RefCell<usize>,
+    frame_index: RefCell<usize>, // TODO: can we not rely on interior mutability
     pipeline: vk::Pipeline,
     pipeline_layout: vk::PipelineLayout,
     descriptor_set: vk::DescriptorSet,
@@ -185,8 +185,10 @@ impl State {
         queue_infos.push(queue_create_info);
 
         let vulkan_1_0_features = vk::PhysicalDeviceFeatures::default();
-        let mut vulkan_1_2_features =
-            vk::PhysicalDeviceVulkan12Features::default().buffer_device_address(true);
+        let mut vulkan_1_2_features = vk::PhysicalDeviceVulkan12Features::default()
+            .buffer_device_address(true)
+            .descriptor_binding_partially_bound(true)
+            .descriptor_binding_variable_descriptor_count(true);
         let mut vulkan_1_3_features =
             vk::PhysicalDeviceVulkan13Features::default().synchronization2(true);
 
@@ -436,32 +438,45 @@ impl State {
         // TODO: descriptors
         let pool_size = vk::DescriptorPoolSize {
             ty: vk::DescriptorType::STORAGE_IMAGE,
-            descriptor_count: 1,
+            descriptor_count: 100,
         };
         let descriptor_pool = create_descriptor_pool(&device, pool_size);
         let binding = vk::DescriptorSetLayoutBinding::default()
             .binding(0)
-            .descriptor_count(1)
+            .descriptor_count(10)
             .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
             .stage_flags(vk::ShaderStageFlags::ALL);
+
+        // this is part of bindless descriptors
         let descriptor_set_layout = create_descriptor_layouts(&device, binding);
-        let descriptor_set =
-            create_descriptor_sets(&device, descriptor_pool, descriptor_set_layout);
+        let storage_image_descriptor_counts = swapchain_images.len() as u32 + 1;
+        let descriptor_set = create_descriptor_sets(
+            &device,
+            descriptor_pool,
+            descriptor_set_layout,
+            storage_image_descriptor_counts,
+        );
 
         // TODO: create fn for write desc set
-        let image_info = vk::DescriptorImageInfo::default()
-            .image_layout(vk::ImageLayout::GENERAL)
-            .image_view(draw_image_view);
-        let image_info = [image_info];
-        let write = vk::WriteDescriptorSet::default()
+        let mut image_infos: Vec<vk::DescriptorImageInfo> =
+            Vec::from([vk::DescriptorImageInfo::default()
+                .image_layout(vk::ImageLayout::GENERAL)
+                .image_view(draw_image_view)]);
+        swapchain_image_views.iter().for_each(|image_view| {
+            image_infos.push(
+                vk::DescriptorImageInfo::default()
+                    .image_layout(vk::ImageLayout::GENERAL)
+                    .image_view(*image_view),
+            );
+        });
+        let storage_descriptor_write = vk::WriteDescriptorSet::default()
             .dst_set(descriptor_set)
             .dst_binding(0)
             .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
-            .image_info(&image_info)
-            .descriptor_count(1);
-
+            .image_info(&image_infos)
+            .descriptor_count(storage_image_descriptor_counts);
         unsafe {
-            device.update_descriptor_sets(&[write], &[]);
+            device.update_descriptor_sets(&[storage_descriptor_write], &[]);
         }
 
         // TODO: create fn for this, and account for push constant
@@ -597,7 +612,7 @@ impl ApplicationHandler for App {
                 )
                 .unwrap(),
         );
-
+        println!("Swapchain size on startup: {window_width}x{window_height}");
         self.state = Some(State::new(window));
     }
 
@@ -614,8 +629,12 @@ impl ApplicationHandler for App {
                         width: new_size.width,
                         height: new_size.height,
                     };
+                    // TODO: do we need to wait idle here?
+                    // unsafe {
+                    //     state.device.device_wait_idle().unwrap();
+                    // }
                     update_swapchain(state);
-                    // println!("Resize swapchain driven by WindowEvent::Resized");
+                    println!("Resize swapchain driven by WindowEvent::Resized");
                 }
             }
             winit::event::WindowEvent::RedrawRequested => {
@@ -631,7 +650,7 @@ impl ApplicationHandler for App {
 
                         update_swapchain(state);
                         *state.swapchain_dirty.borrow_mut() = false;
-                        // println!("Resize swapchain driven by ERROR_OUT_OF_DATE_KHR");
+                        println!("Resize swapchain driven by ERROR_OUT_OF_DATE_KHR");
                     }
                 }
             }
@@ -949,7 +968,15 @@ fn create_descriptor_layouts(
     binding: vk::DescriptorSetLayoutBinding,
 ) -> vk::DescriptorSetLayout {
     let binding = [binding];
-    let layout_info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&binding);
+
+    let binding_flags = [vk::DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT
+        | vk::DescriptorBindingFlags::PARTIALLY_BOUND];
+    let mut binding_flags_info =
+        vk::DescriptorSetLayoutBindingFlagsCreateInfo::default().binding_flags(&binding_flags);
+
+    let layout_info = vk::DescriptorSetLayoutCreateInfo::default()
+        .push_next(&mut binding_flags_info)
+        .bindings(&binding);
 
     unsafe {
         device
@@ -964,9 +991,16 @@ fn create_descriptor_sets(
     device: &Device,
     pool: vk::DescriptorPool,
     layout: vk::DescriptorSetLayout,
+    descriptor_counts: u32,
 ) -> vk::DescriptorSet {
     let layout = [layout];
+    let descriptor_counts = [descriptor_counts];
+
+    let mut variable_alloc_info = vk::DescriptorSetVariableDescriptorCountAllocateInfo::default()
+        .descriptor_counts(&descriptor_counts);
+
     let descriptor_set_allocate_info = vk::DescriptorSetAllocateInfo::default()
+        .push_next(&mut variable_alloc_info)
         .descriptor_pool(pool)
         .set_layouts(&layout);
 
