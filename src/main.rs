@@ -738,6 +738,17 @@ fn render_loop(state: &State) {
             .unwrap()
     };
 
+    unsafe {
+        state.device.cmd_bind_descriptor_sets(
+            cmd,
+            vk::PipelineBindPoint::COMPUTE,
+            state.pipeline_layout,
+            0,
+            &[state.descriptor_set],
+            &[],
+        );
+    }
+
     let acquire_semaphore = state.image_acquired_semaphores[current_index];
 
     let swapchain_idx: usize;
@@ -792,6 +803,47 @@ fn render_loop(state: &State) {
     let mut dependency_info =
         vk::DependencyInfo::default().image_memory_barriers(&image_memory_barriers);
     unsafe { state.device.cmd_pipeline_barrier2(cmd, &dependency_info) };
+
+    unsafe {
+        state
+            .device
+            .cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, state.color_pipeline);
+
+        #[allow(dead_code)]
+        struct PushConstants {
+            draw_id: u32,
+        }
+        let pc = PushConstants { draw_id: 0 };
+        push_constants(&state.device, cmd, state.pipeline_layout, &pc);
+        let group_count_x = get_group_count(state.swapchain_extent.width, 8);
+        let group_count_y = get_group_count(state.swapchain_extent.height, 8);
+        state
+            .device
+            .cmd_dispatch(cmd, group_count_x, group_count_y, 1);
+    };
+
+    giga_barrier(&state.device, cmd);
+
+    unsafe {
+        state
+            .device
+            .cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, state.copy_pipeline);
+        #[allow(dead_code)]
+        struct PushConstants {
+            src_id: u32,
+            dst_id: u32,
+        }
+        let pc = PushConstants {
+            src_id: 0,
+            dst_id: swapchain_idx as u32,
+        };
+        push_constants(&state.device, cmd, state.pipeline_layout, &pc);
+        let group_count_x = get_group_count(state.swapchain_extent.width, 8);
+        let group_count_y = get_group_count(state.swapchain_extent.height, 8);
+        state
+            .device
+            .cmd_dispatch(cmd, group_count_x, group_count_y, 1);
+    }
 
     // transition to present
     image_memory_barrier.image = state.swapchain_images[swapchain_idx];
@@ -1057,6 +1109,42 @@ fn create_compute_pipeline(
     };
 
     pipelines[0]
+}
+
+fn push_constants<T>(
+    device: &Device,
+    cmd: vk::CommandBuffer,
+    layout: vk::PipelineLayout,
+    data: &T,
+) {
+    let size = std::mem::size_of::<T>();
+    let len = size / std::mem::size_of::<u8>();
+
+    let as_u8_slice = unsafe {
+        std::slice::from_raw_parts((data as *const T) as *const u8, len)
+    };
+
+    let mut constants = [0u8; 256];
+    constants[..size].copy_from_slice(as_u8_slice);
+
+    unsafe {
+        device.cmd_push_constants(cmd, layout, vk::ShaderStageFlags::ALL, 0, &constants);
+    }
+}
+
+fn get_group_count(size: u32, threads: u32) -> u32 {
+    (size + threads - 1) / threads
+}
+
+fn giga_barrier(device: &Device, cmd: vk::CommandBuffer) {
+    let memory_barrier = [vk::MemoryBarrier2::default()
+        .src_stage_mask(vk::PipelineStageFlags2::ALL_GRAPHICS)
+        .src_access_mask(vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE)
+        .dst_stage_mask(vk::PipelineStageFlags2::ALL_GRAPHICS)
+        .dst_access_mask(vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE)];
+
+    let dependency_info = vk::DependencyInfo::default().memory_barriers(&memory_barrier);
+    unsafe { device.cmd_pipeline_barrier2(cmd, &dependency_info) };
 }
 
 fn main() {
