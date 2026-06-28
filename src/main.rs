@@ -338,41 +338,8 @@ impl State {
         })
         .unwrap();
 
-        let image_create_info = vk::ImageCreateInfo::default()
-            .image_type(vk::ImageType::TYPE_2D)
-            .format(vk::Format::R16G16B16A16_SFLOAT)
-            .extent(vk::Extent3D {
-                width: swapchain_extent.width,
-                height: swapchain_extent.height,
-                depth: 1,
-            })
-            .mip_levels(1)
-            .array_layers(1)
-            .usage(vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_SRC)
-            .samples(vk::SampleCountFlags::TYPE_1);
-
-        let draw_image = unsafe { device.create_image(&image_create_info, None).unwrap() };
-        let requirements = unsafe { device.get_image_memory_requirements(draw_image) };
-
-        let image_allocation = allocator
-            .allocate(&AllocationCreateDesc {
-                name: "Example allocation",
-                requirements,
-                location: MemoryLocation::GpuOnly,
-                linear: false, // TODO: t/f?
-                allocation_scheme: AllocationScheme::GpuAllocatorManaged,
-            })
-            .unwrap();
-
-        unsafe {
-            device
-                .bind_image_memory(
-                    draw_image,
-                    image_allocation.memory(),
-                    image_allocation.offset(),
-                )
-                .unwrap()
-        };
+        let (draw_image, image_allocation) =
+            create_image(&device, &mut allocator, swapchain_extent);
 
         // TODO: create helper fn, and also create a Image container that holds allocation, vk::Image etc.
         let image_view_info = vk::ImageViewCreateInfo::default()
@@ -652,11 +619,69 @@ impl ApplicationHandler for App {
                         width: new_size.width,
                         height: new_size.height,
                     };
-                    // TODO: do we need to wait idle here?
-                    // unsafe {
-                    //     state.device.device_wait_idle().unwrap();
-                    // }
+
                     update_swapchain(state);
+
+                    // destroy outdated resources
+                    unsafe {
+                        let allocation = std::mem::take(&mut state.image_allocation);
+                        state.allocator.free(allocation).unwrap();
+                        state.device.destroy_image(state.draw_image, None);
+                        state.device.destroy_image_view(state.draw_image_view, None);
+                    }
+
+                    // update resources
+                    (state.draw_image, state.image_allocation) =
+                        create_image(&state.device, &mut state.allocator, state.swapchain_extent);
+
+                    let image_view_info = vk::ImageViewCreateInfo::default()
+                        .image(state.draw_image)
+                        .view_type(vk::ImageViewType::TYPE_2D)
+                        .format(vk::Format::R16G16B16A16_SFLOAT)
+                        .components(vk::ComponentMapping {
+                            r: vk::ComponentSwizzle::R,
+                            g: vk::ComponentSwizzle::G,
+                            b: vk::ComponentSwizzle::B,
+                            a: vk::ComponentSwizzle::A,
+                        })
+                        .subresource_range(vk::ImageSubresourceRange {
+                            aspect_mask: vk::ImageAspectFlags::COLOR,
+                            base_mip_level: 0,
+                            level_count: 1,
+                            base_array_layer: 0,
+                            layer_count: 1,
+                        });
+                    state.draw_image_view = unsafe {
+                        state
+                            .device
+                            .create_image_view(&image_view_info, None)
+                            .unwrap()
+                    };
+
+                    let mut image_infos: Vec<vk::DescriptorImageInfo> =
+                        Vec::from([vk::DescriptorImageInfo::default()
+                            .image_layout(vk::ImageLayout::GENERAL)
+                            .image_view(state.draw_image_view)]);
+                    state.swapchain_image_views.iter().for_each(|image_view| {
+                        image_infos.push(
+                            vk::DescriptorImageInfo::default()
+                                .image_layout(vk::ImageLayout::GENERAL)
+                                .image_view(*image_view),
+                        );
+                    });
+                    let storage_image_descriptor_counts = state.swapchain_images.len() as u32 + 1;
+                    let storage_descriptor_write = vk::WriteDescriptorSet::default()
+                        .dst_set(state.descriptor_set)
+                        .dst_binding(0)
+                        .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+                        .image_info(&image_infos)
+                        .descriptor_count(storage_image_descriptor_counts);
+                    unsafe {
+                        state
+                            .device
+                            .update_descriptor_sets(&[storage_descriptor_write], &[]);
+                    }
+
                     println!("Resize swapchain driven by WindowEvent::Resized");
                 }
             }
@@ -672,6 +697,60 @@ impl ApplicationHandler for App {
                         };
 
                         update_swapchain(state);
+
+                        unsafe {
+                            state.device.destroy_image_view(state.draw_image_view, None);
+                        }
+
+                        let image_view_info = vk::ImageViewCreateInfo::default()
+                            .image(state.draw_image)
+                            .view_type(vk::ImageViewType::TYPE_2D)
+                            .format(vk::Format::R16G16B16A16_SFLOAT)
+                            .components(vk::ComponentMapping {
+                                r: vk::ComponentSwizzle::R,
+                                g: vk::ComponentSwizzle::G,
+                                b: vk::ComponentSwizzle::B,
+                                a: vk::ComponentSwizzle::A,
+                            })
+                            .subresource_range(vk::ImageSubresourceRange {
+                                aspect_mask: vk::ImageAspectFlags::COLOR,
+                                base_mip_level: 0,
+                                level_count: 1,
+                                base_array_layer: 0,
+                                layer_count: 1,
+                            });
+                        state.draw_image_view = unsafe {
+                            state
+                                .device
+                                .create_image_view(&image_view_info, None)
+                                .unwrap()
+                        };
+
+                        let mut image_infos: Vec<vk::DescriptorImageInfo> =
+                            Vec::from([vk::DescriptorImageInfo::default()
+                                .image_layout(vk::ImageLayout::GENERAL)
+                                .image_view(state.draw_image_view)]);
+                        state.swapchain_image_views.iter().for_each(|image_view| {
+                            image_infos.push(
+                                vk::DescriptorImageInfo::default()
+                                    .image_layout(vk::ImageLayout::GENERAL)
+                                    .image_view(*image_view),
+                            );
+                        });
+                        let storage_image_descriptor_counts =
+                            state.swapchain_images.len() as u32 + 1;
+                        let storage_descriptor_write = vk::WriteDescriptorSet::default()
+                            .dst_set(state.descriptor_set)
+                            .dst_binding(0)
+                            .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+                            .image_info(&image_infos)
+                            .descriptor_count(storage_image_descriptor_counts);
+                        unsafe {
+                            state
+                                .device
+                                .update_descriptor_sets(&[storage_descriptor_write], &[]);
+                        }
+
                         *state.swapchain_dirty.borrow_mut() = false;
                         println!("Resize swapchain driven by ERROR_OUT_OF_DATE_KHR");
                     }
@@ -835,7 +914,7 @@ fn render_loop(state: &State) {
         }
         let pc = PushConstants {
             src_id: 0,
-            dst_id: swapchain_idx as u32,
+            dst_id: swapchain_idx as u32 + 1,
         };
         push_constants(&state.device, cmd, state.pipeline_layout, &pc);
         let group_count_x = get_group_count(state.swapchain_extent.width, 8);
@@ -935,7 +1014,6 @@ fn update_swapchain(state: &mut State) {
 
     let old_swapchain_handle = state.swapchain;
     state.swapchain_create_info.old_swapchain = old_swapchain_handle;
-
     unsafe {
         state.swapchain = state
             .swapchain_loader
@@ -1120,9 +1198,7 @@ fn push_constants<T>(
     let size = std::mem::size_of::<T>();
     let len = size / std::mem::size_of::<u8>();
 
-    let as_u8_slice = unsafe {
-        std::slice::from_raw_parts((data as *const T) as *const u8, len)
-    };
+    let as_u8_slice = unsafe { std::slice::from_raw_parts((data as *const T) as *const u8, len) };
 
     let mut constants = [0u8; 256];
     constants[..size].copy_from_slice(as_u8_slice);
@@ -1145,6 +1221,47 @@ fn giga_barrier(device: &Device, cmd: vk::CommandBuffer) {
 
     let dependency_info = vk::DependencyInfo::default().memory_barriers(&memory_barrier);
     unsafe { device.cmd_pipeline_barrier2(cmd, &dependency_info) };
+}
+
+// TODO: refactor
+fn create_image(
+    device: &Device,
+    allocator: &mut Allocator,
+    extent: vk::Extent2D,
+) -> (vk::Image, Allocation) {
+    let image_create_info = vk::ImageCreateInfo::default()
+        .image_type(vk::ImageType::TYPE_2D)
+        .format(vk::Format::R16G16B16A16_SFLOAT)
+        .extent(vk::Extent3D {
+            width: extent.width,
+            height: extent.height,
+            depth: 1,
+        })
+        .mip_levels(1)
+        .array_layers(1)
+        .usage(vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_SRC)
+        .samples(vk::SampleCountFlags::TYPE_1);
+
+    let image = unsafe { device.create_image(&image_create_info, None).unwrap() };
+    let requirements = unsafe { device.get_image_memory_requirements(image) };
+
+    let allocation = allocator
+        .allocate(&AllocationCreateDesc {
+            name: "Example allocation",
+            requirements,
+            location: MemoryLocation::GpuOnly,
+            linear: false,
+            allocation_scheme: AllocationScheme::GpuAllocatorManaged,
+        })
+        .unwrap();
+
+    unsafe {
+        device
+            .bind_image_memory(image, allocation.memory(), allocation.offset())
+            .unwrap()
+    };
+
+    (image, allocation)
 }
 
 fn main() {
