@@ -175,7 +175,6 @@ impl State {
         };
 
         let queue_family_index = queue_family_index as u32;
-        let device_extension_names_raw = [swapchain::NAME.as_ptr()];
         let priorities = [1.0];
 
         let queue_create_info = vk::DeviceQueueCreateInfo::default()
@@ -185,6 +184,28 @@ impl State {
         let mut queue_infos: Vec<DeviceQueueCreateInfo> = Vec::new();
         queue_infos.push(queue_create_info);
 
+        // check extension support
+        let device_extension_names_raw = [swapchain::NAME.as_ptr()];
+
+        // check feature support
+        let mut enabled_vulkan_1_1_features = vk::PhysicalDeviceVulkan11Features::default();
+        let mut enabled_vulkan_1_2_features = vk::PhysicalDeviceVulkan12Features::default();
+        let mut enabled_vulkan_1_3_features = vk::PhysicalDeviceVulkan13Features::default();
+        let mut enabled_features = vk::PhysicalDeviceFeatures2::default()
+            .push_next(&mut enabled_vulkan_1_1_features)
+            .push_next(&mut enabled_vulkan_1_2_features)
+            .push_next(&mut enabled_vulkan_1_3_features);
+
+        unsafe {
+            instance.get_physical_device_features2(pdevice, &mut enabled_features);
+        }
+
+        assert!(enabled_vulkan_1_2_features.buffer_device_address > 0);
+        assert!(enabled_vulkan_1_2_features.descriptor_binding_partially_bound > 0);
+        assert!(enabled_vulkan_1_2_features.descriptor_binding_variable_descriptor_count > 0);
+        assert!(enabled_vulkan_1_2_features.runtime_descriptor_array > 0);
+        assert!(enabled_vulkan_1_3_features.synchronization2 > 0);
+
         let vulkan_1_0_features = vk::PhysicalDeviceFeatures::default();
         let mut vulkan_1_2_features = vk::PhysicalDeviceVulkan12Features::default()
             .buffer_device_address(true)
@@ -193,8 +214,6 @@ impl State {
             .runtime_descriptor_array(true);
         let mut vulkan_1_3_features =
             vk::PhysicalDeviceVulkan13Features::default().synchronization2(true);
-
-        // TODO: extension support check
 
         let device_create_info = vk::DeviceCreateInfo::default()
             .queue_create_infos(&queue_infos)
@@ -602,7 +621,7 @@ impl ApplicationHandler for App {
                 )
                 .unwrap(),
         );
-        println!("Swapchain size on startup: {window_width}x{window_height}");
+
         self.state = Some(State::new(window));
     }
 
