@@ -599,7 +599,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mew-rust"
+name = "mew"
 version = "0.1.0"
 dependencies = [
  "ash",
