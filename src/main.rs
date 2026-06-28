@@ -9,7 +9,7 @@ use ash::{
 use ash_window;
 use gpu_allocator::MemoryLocation;
 use gpu_allocator::vulkan::*;
-use std::{borrow::Cow, cell::RefCell, ffi, io::Cursor, mem::ManuallyDrop, os::raw::c_char};
+use std::{borrow::Cow, ffi, io::Cursor, mem::ManuallyDrop, os::raw::c_char};
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
@@ -40,7 +40,7 @@ struct State {
     swapchain_images: Vec<vk::Image>,
     swapchain_image_views: Vec<vk::ImageView>,
     swapchain_extent: vk::Extent2D,
-    swapchain_dirty: RefCell<bool>, // TODO: can we not rely on interior mutability
+    swapchain_dirty: bool,
     command_pools: Vec<vk::CommandPool>,
     command_buffers: Vec<vk::CommandBuffer>,
     debug_utils_loader: debug_utils::Instance,
@@ -48,7 +48,7 @@ struct State {
     fences: Vec<Fence>,
     render_done_semaphores: Vec<Semaphore>,
     image_acquired_semaphores: Vec<Semaphore>,
-    frame_index: RefCell<usize>, // TODO: can we not rely on interior mutability
+    frame_index: usize,
     color_pipeline: vk::Pipeline,
     copy_pipeline: vk::Pipeline,
     pipeline_layout: vk::PipelineLayout,
@@ -527,7 +527,7 @@ impl State {
             swapchain_images,
             swapchain_image_views,
             swapchain_extent,
-            swapchain_dirty: RefCell::new(false),
+            swapchain_dirty: false,
             command_pools,
             command_buffers,
             debug_utils_loader,
@@ -535,7 +535,7 @@ impl State {
             fences,
             render_done_semaphores,
             image_acquired_semaphores,
-            frame_index: RefCell::new(0),
+            frame_index: 0,
             color_pipeline,
             copy_pipeline,
             pipeline_layout,
@@ -708,7 +708,7 @@ impl ApplicationHandler for App {
                 if let Some(state) = self.state.as_mut() {
                     render_loop(state);
 
-                    if *state.swapchain_dirty.borrow() {
+                    if state.swapchain_dirty {
                         let new_size = state.window.inner_size();
                         state.swapchain_create_info.image_extent = vk::Extent2D {
                             width: new_size.width,
@@ -770,7 +770,7 @@ impl ApplicationHandler for App {
                                 .update_descriptor_sets(&[storage_descriptor_write], &[]);
                         }
 
-                        *state.swapchain_dirty.borrow_mut() = false;
+                        state.swapchain_dirty = false;
                         println!("Resize swapchain driven by ERROR_OUT_OF_DATE_KHR");
                     }
                 }
@@ -806,8 +806,8 @@ impl ApplicationHandler for App {
     }
 }
 
-fn render_loop(state: &State) {
-    let current_index = *state.frame_index.borrow() % FRAMES_IN_FLIGHT;
+fn render_loop(state: &mut State) {
+    let current_index = state.frame_index % FRAMES_IN_FLIGHT;
 
     let fence = state.fences[current_index];
     unsafe {
@@ -863,8 +863,7 @@ fn render_loop(state: &State) {
                 swapchain_idx = present_idx as usize;
             }
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
-                let mut swapchain_dirty = state.swapchain_dirty.borrow_mut();
-                *swapchain_dirty = true;
+                state.swapchain_dirty = true;
                 return;
             }
             Err(e) => {
@@ -1002,8 +1001,7 @@ fn render_loop(state: &State) {
         match present_result {
             Ok(_) => {}
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
-                let mut swapchain_dirty = state.swapchain_dirty.borrow_mut();
-                *swapchain_dirty = true;
+                state.swapchain_dirty = true;
                 return;
             }
             Err(e) => {
@@ -1012,8 +1010,7 @@ fn render_loop(state: &State) {
         }
     };
 
-    let mut new_frame_index = state.frame_index.borrow_mut();
-    *new_frame_index += 1;
+    state.frame_index += 1;
 }
 
 fn update_swapchain(state: &mut State) {
