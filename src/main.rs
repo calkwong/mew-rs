@@ -49,7 +49,8 @@ struct State {
     render_done_semaphores: Vec<Semaphore>,
     image_acquired_semaphores: Vec<Semaphore>,
     frame_index: RefCell<usize>, // TODO: can we not rely on interior mutability
-    pipeline: vk::Pipeline,
+    color_pipeline: vk::Pipeline,
+    copy_pipeline: vk::Pipeline,
     pipeline_layout: vk::PipelineLayout,
     descriptor_set: vk::DescriptorSet,
     descriptor_pool: vk::DescriptorPool,
@@ -188,7 +189,8 @@ impl State {
         let mut vulkan_1_2_features = vk::PhysicalDeviceVulkan12Features::default()
             .buffer_device_address(true)
             .descriptor_binding_partially_bound(true)
-            .descriptor_binding_variable_descriptor_count(true);
+            .descriptor_binding_variable_descriptor_count(true)
+            .runtime_descriptor_array(true);
         let mut vulkan_1_3_features =
             vk::PhysicalDeviceVulkan13Features::default().synchronization2(true);
 
@@ -206,6 +208,11 @@ impl State {
                 .create_device(pdevice, &device_create_info, None)
                 .unwrap()
         };
+
+        let mut properties = vk::PhysicalDeviceProperties2::default();
+        unsafe {
+            instance.get_physical_device_properties2(pdevice, &mut properties);
+        }
 
         let graphics_queue = unsafe { device.get_device_queue(queue_family_index, 0) };
 
@@ -479,10 +486,14 @@ impl State {
             device.update_descriptor_sets(&[storage_descriptor_write], &[]);
         }
 
-        // TODO: create fn for this, and account for push constant
+        // TODO: create fn for this
         let descriptor_set_layouts = [descriptor_set_layout];
-        let pipeline_layout_info =
-            vk::PipelineLayoutCreateInfo::default().set_layouts(&descriptor_set_layouts);
+        let push_constant_range = [vk::PushConstantRange::default()
+            .stage_flags(vk::ShaderStageFlags::ALL)
+            .size(properties.properties.limits.max_push_constants_size)];
+        let pipeline_layout_info = vk::PipelineLayoutCreateInfo::default()
+            .set_layouts(&descriptor_set_layouts)
+            .push_constant_ranges(&push_constant_range);
         let pipeline_layout = unsafe {
             device
                 .create_pipeline_layout(&pipeline_layout_info, None)
@@ -493,12 +504,22 @@ impl State {
         let mut spv_file = Cursor::new(&include_bytes!("../shaders/compiled/color.spv")[..]);
         let code = ash::util::read_spv(&mut spv_file).expect("Failed to read spv file");
         let create_info = vk::ShaderModuleCreateInfo::default().code(&code);
-        let shader_module = unsafe { device.create_shader_module(&create_info, None).unwrap() };
+        let color_shader_module =
+            unsafe { device.create_shader_module(&create_info, None).unwrap() };
 
-        let pipeline = create_compute_pipeline(&device, pipeline_layout, shader_module);
+        let mut spv_file =
+            Cursor::new(&include_bytes!("../shaders/compiled/copy_swapchain.spv")[..]);
+        let code = ash::util::read_spv(&mut spv_file).expect("Failed to read spv file");
+        let create_info = vk::ShaderModuleCreateInfo::default().code(&code);
+        let copy_shader_module =
+            unsafe { device.create_shader_module(&create_info, None).unwrap() };
+
+        let color_pipeline = create_compute_pipeline(&device, pipeline_layout, color_shader_module);
+        let copy_pipeline = create_compute_pipeline(&device, pipeline_layout, copy_shader_module);
 
         unsafe {
-            device.destroy_shader_module(shader_module, None);
+            device.destroy_shader_module(color_shader_module, None);
+            device.destroy_shader_module(copy_shader_module, None);
         }
 
         let this = Self {
@@ -529,7 +550,8 @@ impl State {
             render_done_semaphores,
             image_acquired_semaphores,
             frame_index: RefCell::new(0),
-            pipeline,
+            color_pipeline,
+            copy_pipeline,
             pipeline_layout,
             descriptor_set,
             descriptor_pool,
@@ -579,7 +601,8 @@ impl Drop for State {
                 .destroy_descriptor_pool(self.descriptor_pool, None);
             self.device
                 .destroy_pipeline_layout(self.pipeline_layout, None);
-            self.device.destroy_pipeline(self.pipeline, None);
+            self.device.destroy_pipeline(self.color_pipeline, None);
+            self.device.destroy_pipeline(self.copy_pipeline, None);
 
             self.surface_loader.destroy_surface(self.surface, None);
             self.device.destroy_device(None);
