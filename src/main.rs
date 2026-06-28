@@ -21,8 +21,7 @@ use winit::{
 const FRAMES_IN_FLIGHT: usize = 1;
 
 #[allow(dead_code)]
-struct State {
-    window: Window,
+struct Engine {
     entry: Entry,
     instance: Instance,
     surface: vk::SurfaceKHR,
@@ -31,9 +30,6 @@ struct State {
     queue_family_index: u32,
     graphics_queue: Queue,
     allocator: ManuallyDrop<Allocator>,
-    image_allocation: Allocation,
-    draw_image: vk::Image,
-    draw_image_view: vk::ImageView,
     swapchain_loader: swapchain::Device,
     swapchain: SwapchainKHR,
     swapchain_create_info: vk::SwapchainCreateInfoKHR<'static>,
@@ -41,28 +37,12 @@ struct State {
     swapchain_image_views: Vec<vk::ImageView>,
     swapchain_extent: vk::Extent2D,
     swapchain_dirty: bool,
-    command_pools: Vec<vk::CommandPool>,
-    command_buffers: Vec<vk::CommandBuffer>,
     debug_utils_loader: debug_utils::Instance,
     debug_callback: DebugUtilsMessengerEXT,
-    fences: Vec<Fence>,
-    render_done_semaphores: Vec<Semaphore>,
-    image_acquired_semaphores: Vec<Semaphore>,
-    frame_index: usize,
-    color_pipeline: vk::Pipeline,
-    copy_pipeline: vk::Pipeline,
-    pipeline_layout: vk::PipelineLayout,
-    descriptor_set: vk::DescriptorSet,
-    descriptor_pool: vk::DescriptorPool,
-    descriptor_set_layout: vk::DescriptorSetLayout,
 }
 
-struct App {
-    state: Option<State>,
-}
-
-impl State {
-    fn new(window: Option<Window>) -> Self {
+impl Engine {
+    fn new(window: Option<&Window>) -> Self {
         let entry = Entry::linked();
 
         let window = window.unwrap();
@@ -235,6 +215,18 @@ impl State {
 
         let graphics_queue = unsafe { device.get_device_queue(queue_family_index, 0) };
 
+        let allocator = Allocator::new(&AllocatorCreateDesc {
+            instance: instance.clone(),
+            device: device.clone(),
+            physical_device: pdevice,
+            debug_settings: Default::default(),
+            buffer_device_address: true,
+            allocation_sizes: Default::default(),
+        })
+        .unwrap();
+
+        let swapchain_loader = swapchain::Device::new(&instance, &device);
+
         let surface_formats = unsafe {
             surface_loader
                 .get_physical_device_surface_formats(pdevice, surface)
@@ -299,7 +291,6 @@ impl State {
             .find(|&mode| mode == vk::PresentModeKHR::MAILBOX)
             .unwrap_or(vk::PresentModeKHR::FIFO);
 
-        let swapchain_loader = swapchain::Device::new(&instance, &device);
         let swapchain_create_info = vk::SwapchainCreateInfoKHR::default()
             .surface(surface)
             .min_image_count(desired_image_count)
@@ -347,18 +338,62 @@ impl State {
 
         let swapchain_extent = surface_resolution;
 
-        let mut allocator = Allocator::new(&AllocatorCreateDesc {
-            instance: instance.clone(),
-            device: device.clone(),
-            physical_device: pdevice,
-            debug_settings: Default::default(),
-            buffer_device_address: true,
-            allocation_sizes: Default::default(),
-        })
-        .unwrap();
+        Self {
+            entry,
+            instance,
+            surface,
+            surface_loader,
+            device,
+            queue_family_index,
+            graphics_queue,
+            allocator: ManuallyDrop::new(allocator),
+            swapchain_loader,
+            swapchain,
+            swapchain_create_info,
+            swapchain_images,
+            swapchain_image_views,
+            swapchain_extent,
+            swapchain_dirty: false,
+            debug_utils_loader,
+            debug_callback,
+        }
+    }
+}
+
+#[allow(dead_code)]
+struct State {
+    window: Window,
+    engine: Engine,
+    image_allocation: Allocation,
+    draw_image: vk::Image,
+    draw_image_view: vk::ImageView,
+    command_pools: Vec<vk::CommandPool>,
+    command_buffers: Vec<vk::CommandBuffer>,
+    fences: Vec<Fence>,
+    render_done_semaphores: Vec<Semaphore>,
+    image_acquired_semaphores: Vec<Semaphore>,
+    frame_index: usize,
+    color_pipeline: vk::Pipeline,
+    copy_pipeline: vk::Pipeline,
+    pipeline_layout: vk::PipelineLayout,
+    descriptor_set: vk::DescriptorSet,
+    descriptor_pool: vk::DescriptorPool,
+    descriptor_set_layout: vk::DescriptorSetLayout,
+}
+
+struct App {
+    state: Option<State>,
+}
+
+impl State {
+    fn new(window: Option<Window>) -> Self {
+        // i don't like this mut for the sake of image creation
+        let mut engine = Engine::new(window.as_ref());
+
+        let device = &engine.device;
 
         let (draw_image, image_allocation) =
-            create_image(&device, &mut allocator, swapchain_extent);
+            create_image(&device, &mut engine.allocator, engine.swapchain_extent);
 
         // TODO: create helper fn, and also create a Image container that holds allocation, vk::Image etc.
         let image_view_info = vk::ImageViewCreateInfo::default()
@@ -381,7 +416,7 @@ impl State {
         let draw_image_view = unsafe { device.create_image_view(&image_view_info, None).unwrap() };
 
         let command_pool_info =
-            vk::CommandPoolCreateInfo::default().queue_family_index(queue_family_index);
+            vk::CommandPoolCreateInfo::default().queue_family_index(engine.queue_family_index);
         let command_pools: Vec<vk::CommandPool> = unsafe {
             (0..FRAMES_IN_FLIGHT)
                 .map(|_| {
@@ -417,7 +452,7 @@ impl State {
 
         let semaphore_info = vk::SemaphoreCreateInfo::default();
         let render_done_semaphores: Vec<vk::Semaphore> = unsafe {
-            (0..swapchain_images.len())
+            (0..engine.swapchain_images.len())
                 .map(|_| device.create_semaphore(&semaphore_info, None).unwrap())
                 .collect()
         };
@@ -442,7 +477,7 @@ impl State {
 
         // this is part of bindless descriptors
         let descriptor_set_layout = create_descriptor_layouts(&device, binding);
-        let storage_image_descriptor_counts = swapchain_images.len() as u32 + 1;
+        let storage_image_descriptor_counts = engine.swapchain_images.len() as u32 + 1;
         let descriptor_set = create_descriptor_sets(
             &device,
             descriptor_pool,
@@ -455,7 +490,7 @@ impl State {
             Vec::from([vk::DescriptorImageInfo::default()
                 .image_layout(vk::ImageLayout::GENERAL)
                 .image_view(draw_image_view)]);
-        swapchain_image_views.iter().for_each(|image_view| {
+        engine.swapchain_image_views.iter().for_each(|image_view| {
             image_infos.push(
                 vk::DescriptorImageInfo::default()
                     .image_layout(vk::ImageLayout::GENERAL)
@@ -476,7 +511,8 @@ impl State {
         let descriptor_set_layouts = [descriptor_set_layout];
         let push_constant_range = [vk::PushConstantRange::default()
             .stage_flags(vk::ShaderStageFlags::ALL)
-            .size(properties.properties.limits.max_push_constants_size)];
+            // .size(properties.properties.limits.max_push_constants_size)];
+            .size(256)]; // TODO: hardcoded
         let pipeline_layout_info = vk::PipelineLayoutCreateInfo::default()
             .set_layouts(&descriptor_set_layouts)
             .push_constant_ranges(&push_constant_range);
@@ -509,29 +545,13 @@ impl State {
         }
 
         let this = Self {
-            window,
-            entry,
-            instance,
-            surface,
-            surface_loader,
-            device,
-            queue_family_index,
-            graphics_queue,
-            allocator: ManuallyDrop::new(allocator),
+            window: window.unwrap(),
+            engine,
             image_allocation,
             draw_image,
             draw_image_view,
-            swapchain_loader,
-            swapchain,
-            swapchain_create_info,
-            swapchain_images,
-            swapchain_image_views,
-            swapchain_extent,
-            swapchain_dirty: false,
             command_pools,
             command_buffers,
-            debug_utils_loader,
-            debug_callback,
             fences,
             render_done_semaphores,
             image_acquired_semaphores,
@@ -550,6 +570,44 @@ impl State {
 
 impl Drop for State {
     fn drop(&mut self) {
+        println!("dropping state");
+        let device = &self.engine.device;
+
+        unsafe {
+            self.command_pools.iter().for_each(|pool| {
+                device.destroy_command_pool(*pool, None);
+            });
+
+            self.fences.iter().for_each(|fence| {
+                device.destroy_fence(*fence, None);
+            });
+
+            self.render_done_semaphores.iter().for_each(|semaphore| {
+                device.destroy_semaphore(*semaphore, None);
+            });
+
+            self.image_acquired_semaphores.iter().for_each(|semaphore| {
+                device.destroy_semaphore(*semaphore, None);
+            });
+
+            // clean up allocator + resources
+            let allocation = std::mem::take(&mut self.image_allocation);
+            self.engine.allocator.free(allocation).unwrap();
+            device.destroy_image(self.draw_image, None);
+            device.destroy_image_view(self.draw_image_view, None);
+
+            device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
+            device.destroy_descriptor_pool(self.descriptor_pool, None);
+            device.destroy_pipeline_layout(self.pipeline_layout, None);
+            device.destroy_pipeline(self.color_pipeline, None);
+            device.destroy_pipeline(self.copy_pipeline, None);
+        }
+    }
+}
+
+impl Drop for Engine {
+    fn drop(&mut self) {
+        println!("dropping engine");
         unsafe {
             self.swapchain_loader
                 .destroy_swapchain(self.swapchain, None);
@@ -558,37 +616,8 @@ impl Drop for State {
                 self.device.destroy_image_view(*image_view, None);
             });
 
-            self.command_pools.iter().for_each(|pool| {
-                self.device.destroy_command_pool(*pool, None);
-            });
-
-            self.fences.iter().for_each(|fence| {
-                self.device.destroy_fence(*fence, None);
-            });
-
-            self.render_done_semaphores.iter().for_each(|semaphore| {
-                self.device.destroy_semaphore(*semaphore, None);
-            });
-
-            self.image_acquired_semaphores.iter().for_each(|semaphore| {
-                self.device.destroy_semaphore(*semaphore, None);
-            });
-
-            // clean up allocator + resources
-            let allocation = std::mem::take(&mut self.image_allocation);
-            self.allocator.free(allocation).unwrap();
-            self.device.destroy_image(self.draw_image, None);
-            self.device.destroy_image_view(self.draw_image_view, None);
+            dbg!(self.allocator.generate_report());
             ManuallyDrop::drop(&mut self.allocator);
-
-            self.device
-                .destroy_descriptor_set_layout(self.descriptor_set_layout, None);
-            self.device
-                .destroy_descriptor_pool(self.descriptor_pool, None);
-            self.device
-                .destroy_pipeline_layout(self.pipeline_layout, None);
-            self.device.destroy_pipeline(self.color_pipeline, None);
-            self.device.destroy_pipeline(self.copy_pipeline, None);
 
             self.surface_loader.destroy_surface(self.surface, None);
             self.device.destroy_device(None);
@@ -634,24 +663,29 @@ impl ApplicationHandler for App {
         match event {
             winit::event::WindowEvent::Resized(new_size) => {
                 if let Some(state) = self.state.as_mut() {
-                    state.swapchain_create_info.image_extent = vk::Extent2D {
+                    state.engine.swapchain_create_info.image_extent = vk::Extent2D {
                         width: new_size.width,
                         height: new_size.height,
                     };
 
                     update_swapchain(state);
 
+                    let device = &state.engine.device;
+
                     // destroy outdated resources
                     unsafe {
                         let allocation = std::mem::take(&mut state.image_allocation);
-                        state.allocator.free(allocation).unwrap();
-                        state.device.destroy_image(state.draw_image, None);
-                        state.device.destroy_image_view(state.draw_image_view, None);
+                        state.engine.allocator.free(allocation).unwrap();
+                        device.destroy_image(state.draw_image, None);
+                        device.destroy_image_view(state.draw_image_view, None);
                     }
 
                     // update resources
-                    (state.draw_image, state.image_allocation) =
-                        create_image(&state.device, &mut state.allocator, state.swapchain_extent);
+                    (state.draw_image, state.image_allocation) = create_image(
+                        &device,
+                        &mut state.engine.allocator,
+                        state.engine.swapchain_extent,
+                    );
 
                     let image_view_info = vk::ImageViewCreateInfo::default()
                         .image(state.draw_image)
@@ -670,25 +704,26 @@ impl ApplicationHandler for App {
                             base_array_layer: 0,
                             layer_count: 1,
                         });
-                    state.draw_image_view = unsafe {
-                        state
-                            .device
-                            .create_image_view(&image_view_info, None)
-                            .unwrap()
-                    };
+                    state.draw_image_view =
+                        unsafe { device.create_image_view(&image_view_info, None).unwrap() };
 
                     let mut image_infos: Vec<vk::DescriptorImageInfo> =
                         Vec::from([vk::DescriptorImageInfo::default()
                             .image_layout(vk::ImageLayout::GENERAL)
                             .image_view(state.draw_image_view)]);
-                    state.swapchain_image_views.iter().for_each(|image_view| {
-                        image_infos.push(
-                            vk::DescriptorImageInfo::default()
-                                .image_layout(vk::ImageLayout::GENERAL)
-                                .image_view(*image_view),
-                        );
-                    });
-                    let storage_image_descriptor_counts = state.swapchain_images.len() as u32 + 1;
+                    state
+                        .engine
+                        .swapchain_image_views
+                        .iter()
+                        .for_each(|image_view| {
+                            image_infos.push(
+                                vk::DescriptorImageInfo::default()
+                                    .image_layout(vk::ImageLayout::GENERAL)
+                                    .image_view(*image_view),
+                            );
+                        });
+                    let storage_image_descriptor_counts =
+                        state.engine.swapchain_images.len() as u32 + 1;
                     let storage_descriptor_write = vk::WriteDescriptorSet::default()
                         .dst_set(state.descriptor_set)
                         .dst_binding(0)
@@ -696,9 +731,7 @@ impl ApplicationHandler for App {
                         .image_info(&image_infos)
                         .descriptor_count(storage_image_descriptor_counts);
                     unsafe {
-                        state
-                            .device
-                            .update_descriptor_sets(&[storage_descriptor_write], &[]);
+                        device.update_descriptor_sets(&[storage_descriptor_write], &[]);
                     }
 
                     println!("Resize swapchain driven by WindowEvent::Resized");
@@ -708,12 +741,12 @@ impl ApplicationHandler for App {
                 if let Some(state) = self.state.as_mut() {
                     render_loop(state);
 
-                    if state.swapchain_dirty {
+                    if state.engine.swapchain_dirty {
                         let new_size = state.window.inner_size();
-                        if new_size.width == state.swapchain_extent.width
-                            && new_size.height == state.swapchain_extent.height
+                        if new_size.width == state.engine.swapchain_extent.width
+                            && new_size.height == state.engine.swapchain_extent.height
                         {
-                            state.swapchain_dirty = false;
+                            state.engine.swapchain_dirty = false;
                             return;
                         }
 
@@ -746,7 +779,7 @@ impl ApplicationHandler for App {
 
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
         if let Some(state) = self.state.as_ref() {
-            unsafe { state.device.device_wait_idle().unwrap() };
+            unsafe { state.engine.device.device_wait_idle().unwrap() };
         }
 
         self.state = None;
@@ -754,17 +787,14 @@ impl ApplicationHandler for App {
 }
 
 fn render_loop(state: &mut State) {
+    let device = &state.engine.device;
     let current_index = state.frame_index % FRAMES_IN_FLIGHT;
 
     let fence = state.fences[current_index];
     unsafe {
-        state
-            .device
-            .wait_for_fences(&[fence], true, u64::MAX)
-            .unwrap();
+        device.wait_for_fences(&[fence], true, u64::MAX).unwrap();
 
-        state
-            .device
+        device
             .reset_command_pool(
                 state.command_pools[current_index],
                 vk::CommandPoolResetFlags::empty(),
@@ -776,15 +806,10 @@ fn render_loop(state: &mut State) {
     let cmd_begin_info =
         vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
 
-    unsafe {
-        state
-            .device
-            .begin_command_buffer(cmd, &cmd_begin_info)
-            .unwrap()
-    };
+    unsafe { device.begin_command_buffer(cmd, &cmd_begin_info).unwrap() };
 
     unsafe {
-        state.device.cmd_bind_descriptor_sets(
+        device.cmd_bind_descriptor_sets(
             cmd,
             vk::PipelineBindPoint::COMPUTE,
             state.pipeline_layout,
@@ -798,8 +823,8 @@ fn render_loop(state: &mut State) {
 
     let swapchain_idx: usize;
     unsafe {
-        let acquire_result = state.swapchain_loader.acquire_next_image(
-            state.swapchain,
+        let acquire_result = state.engine.swapchain_loader.acquire_next_image(
+            state.engine.swapchain,
             u64::MAX,
             acquire_semaphore,
             vk::Fence::null(),
@@ -810,7 +835,7 @@ fn render_loop(state: &mut State) {
                 swapchain_idx = present_idx as usize;
             }
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
-                state.swapchain_dirty = true;
+                state.engine.swapchain_dirty = true;
                 return;
             }
             Err(e) => {
@@ -818,11 +843,11 @@ fn render_loop(state: &mut State) {
             }
         }
 
-        state.device.reset_fences(&[fence]).unwrap();
+        device.reset_fences(&[fence]).unwrap();
     }
 
     let mut image_memory_barrier = vk::ImageMemoryBarrier2::default()
-        .image(state.swapchain_images[swapchain_idx])
+        .image(state.engine.swapchain_images[swapchain_idx])
         .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
         .src_access_mask(vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE)
         .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
@@ -846,32 +871,26 @@ fn render_loop(state: &mut State) {
 
     let mut dependency_info =
         vk::DependencyInfo::default().image_memory_barriers(&image_memory_barriers);
-    unsafe { state.device.cmd_pipeline_barrier2(cmd, &dependency_info) };
+    unsafe { device.cmd_pipeline_barrier2(cmd, &dependency_info) };
 
     unsafe {
-        state
-            .device
-            .cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, state.color_pipeline);
+        device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, state.color_pipeline);
 
         #[allow(dead_code)]
         struct PushConstants {
             draw_id: u32,
         }
         let pc = PushConstants { draw_id: 0 };
-        push_constants(&state.device, cmd, state.pipeline_layout, &pc);
-        let group_count_x = get_group_count(state.swapchain_extent.width, 8);
-        let group_count_y = get_group_count(state.swapchain_extent.height, 8);
-        state
-            .device
-            .cmd_dispatch(cmd, group_count_x, group_count_y, 1);
+        push_constants(&device, cmd, state.pipeline_layout, &pc);
+        let group_count_x = get_group_count(state.engine.swapchain_extent.width, 8);
+        let group_count_y = get_group_count(state.engine.swapchain_extent.height, 8);
+        device.cmd_dispatch(cmd, group_count_x, group_count_y, 1);
     };
 
-    giga_barrier(&state.device, cmd);
+    giga_barrier(&device, cmd);
 
     unsafe {
-        state
-            .device
-            .cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, state.copy_pipeline);
+        device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, state.copy_pipeline);
         #[allow(dead_code)]
         struct PushConstants {
             src_id: u32,
@@ -881,26 +900,24 @@ fn render_loop(state: &mut State) {
             src_id: 0,
             dst_id: swapchain_idx as u32 + 1,
         };
-        push_constants(&state.device, cmd, state.pipeline_layout, &pc);
-        let group_count_x = get_group_count(state.swapchain_extent.width, 8);
-        let group_count_y = get_group_count(state.swapchain_extent.height, 8);
-        state
-            .device
-            .cmd_dispatch(cmd, group_count_x, group_count_y, 1);
+        push_constants(&device, cmd, state.pipeline_layout, &pc);
+        let group_count_x = get_group_count(state.engine.swapchain_extent.width, 8);
+        let group_count_y = get_group_count(state.engine.swapchain_extent.height, 8);
+        device.cmd_dispatch(cmd, group_count_x, group_count_y, 1);
     }
 
     // transition to present
-    image_memory_barrier.image = state.swapchain_images[swapchain_idx];
+    image_memory_barrier.image = state.engine.swapchain_images[swapchain_idx];
     image_memory_barrier.old_layout = vk::ImageLayout::GENERAL;
     image_memory_barrier.new_layout = vk::ImageLayout::PRESENT_SRC_KHR;
     image_memory_barriers.clear();
     image_memory_barriers.push(image_memory_barrier);
 
     dependency_info = vk::DependencyInfo::default().image_memory_barriers(&image_memory_barriers);
-    unsafe { state.device.cmd_pipeline_barrier2(cmd, &dependency_info) };
+    unsafe { device.cmd_pipeline_barrier2(cmd, &dependency_info) };
 
     unsafe {
-        state.device.end_command_buffer(cmd).unwrap();
+        device.end_command_buffer(cmd).unwrap();
     }
 
     let cmd_submit_info = vk::CommandBufferSubmitInfo::default().command_buffer(cmd);
@@ -921,7 +938,7 @@ fn render_loop(state: &mut State) {
     let semaphore_wait_info = [semaphore_wait_info];
     let cmd_submit_info = [cmd_submit_info];
     let swapchain_idx = [swapchain_idx as u32];
-    let swapchain = [state.swapchain];
+    let swapchain = [state.engine.swapchain];
 
     let submit_info = vk::SubmitInfo2::default()
         .signal_semaphore_infos(&semaphore_signal_info)
@@ -929,9 +946,8 @@ fn render_loop(state: &mut State) {
         .command_buffer_infos(&cmd_submit_info);
 
     unsafe {
-        state
-            .device
-            .queue_submit2(state.graphics_queue, &[submit_info], fence)
+        device
+            .queue_submit2(state.engine.graphics_queue, &[submit_info], fence)
             .unwrap();
     }
 
@@ -942,13 +958,14 @@ fn render_loop(state: &mut State) {
 
     unsafe {
         let present_result = state
+            .engine
             .swapchain_loader
-            .queue_present(state.graphics_queue, &present_info);
+            .queue_present(state.engine.graphics_queue, &present_info);
 
         match present_result {
             Ok(_) => {}
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
-                state.swapchain_dirty = true;
+                state.engine.swapchain_dirty = true;
                 return;
             }
             Err(e) => {
@@ -961,48 +978,55 @@ fn render_loop(state: &mut State) {
 }
 
 fn update_swapchain(state: &mut State) {
+    let device = &state.engine.device;
+
     unsafe {
-        state.device.device_wait_idle().unwrap();
+        device.device_wait_idle().unwrap();
     }
 
     state
+        .engine
         .swapchain_image_views
         .iter()
         .for_each(|image_view| unsafe {
-            state.device.destroy_image_view(*image_view, None);
+            device.destroy_image_view(*image_view, None);
         });
 
-    state.swapchain_image_views.clear();
-    state.swapchain_images.clear();
+    state.engine.swapchain_image_views.clear();
+    state.engine.swapchain_images.clear();
 
-    let old_swapchain_handle = state.swapchain;
-    state.swapchain_create_info.old_swapchain = old_swapchain_handle;
+    let old_swapchain_handle = state.engine.swapchain;
+    state.engine.swapchain_create_info.old_swapchain = old_swapchain_handle;
     unsafe {
-        state.swapchain = state
+        state.engine.swapchain = state
+            .engine
             .swapchain_loader
-            .create_swapchain(&state.swapchain_create_info, None)
+            .create_swapchain(&state.engine.swapchain_create_info, None)
             .unwrap();
 
         state
+            .engine
             .swapchain_loader
             .destroy_swapchain(old_swapchain_handle, None);
     }
 
-    state.swapchain_images = unsafe {
+    state.engine.swapchain_images = unsafe {
         state
+            .engine
             .swapchain_loader
-            .get_swapchain_images(state.swapchain)
+            .get_swapchain_images(state.engine.swapchain)
             .unwrap()
     };
 
-    state.swapchain_image_views = state
+    state.engine.swapchain_image_views = state
+        .engine
         .swapchain_images
         .iter()
         .map(|&image| {
             let image_view_info = vk::ImageViewCreateInfo::default()
                 .image(image)
                 .view_type(vk::ImageViewType::TYPE_2D)
-                .format(state.swapchain_create_info.image_format)
+                .format(state.engine.swapchain_create_info.image_format)
                 .components(vk::ComponentMapping {
                     r: vk::ComponentSwizzle::R,
                     g: vk::ComponentSwizzle::G,
@@ -1018,6 +1042,7 @@ fn update_swapchain(state: &mut State) {
                 });
             unsafe {
                 state
+                    .engine
                     .device
                     .create_image_view(&image_view_info, None)
                     .unwrap()
@@ -1025,7 +1050,7 @@ fn update_swapchain(state: &mut State) {
         })
         .collect();
 
-    state.swapchain_extent = state.swapchain_create_info.image_extent;
+    state.engine.swapchain_extent = state.engine.swapchain_create_info.image_extent;
 }
 
 unsafe extern "system" fn vulkan_debug_callback(
