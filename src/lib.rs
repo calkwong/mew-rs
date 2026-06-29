@@ -27,6 +27,14 @@ pub struct Swapchain {
     pub dirty: bool,
 }
 
+pub struct Image {
+    pub image: vk::Image,
+    pub view: vk::ImageView,
+    pub format: vk::Format,
+    pub extent: vk::Extent2D,
+    pub allocation: Allocation,
+}
+
 pub struct Engine {
     pub entry: Entry,
     pub instance: Instance,
@@ -452,15 +460,18 @@ pub fn giga_barrier(device: &Device, cmd: vk::CommandBuffer) {
     unsafe { device.cmd_pipeline_barrier2(cmd, &dependency_info) };
 }
 
-// TODO: refactor
 pub fn create_image(
     device: &Device,
     allocator: &mut Allocator,
     extent: vk::Extent2D,
-) -> (vk::Image, Allocation) {
+    format: vk::Format,
+    usage: vk::ImageUsageFlags,
+    aspect: vk::ImageAspectFlags,
+    _mip: bool,
+) -> Image {
     let image_create_info = vk::ImageCreateInfo::default()
         .image_type(vk::ImageType::TYPE_2D)
-        .format(vk::Format::R16G16B16A16_SFLOAT)
+        .format(format)
         .extent(vk::Extent3D {
             width: extent.width,
             height: extent.height,
@@ -468,7 +479,7 @@ pub fn create_image(
         })
         .mip_levels(1)
         .array_layers(1)
-        .usage(vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_SRC)
+        .usage(usage)
         .samples(vk::SampleCountFlags::TYPE_1);
 
     let image = unsafe { device.create_image(&image_create_info, None).unwrap() };
@@ -490,7 +501,21 @@ pub fn create_image(
             .unwrap()
     };
 
-    (image, allocation)
+    let view = create_image_view(
+        device,
+        image,
+        format,
+        vk::ImageViewType::TYPE_2D,
+        image_subresource_range(aspect),
+    );
+
+    Image {
+        image,
+        view,
+        format,
+        extent,
+        allocation,
+    }
 }
 
 pub fn image_subresource_range(aspect_mask: vk::ImageAspectFlags) -> vk::ImageSubresourceRange {

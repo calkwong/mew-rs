@@ -1,5 +1,4 @@
 use ash::vk::{self, Fence, Semaphore};
-use gpu_allocator::vulkan::*;
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
@@ -12,9 +11,7 @@ const FRAMES_IN_FLIGHT: usize = 1;
 struct State {
     window: Window,
     engine: mew::Engine,
-    image_allocation: Allocation,
-    draw_image: vk::Image,
-    draw_image_view: vk::ImageView,
+    draw_image: mew::Image,
     command_pools: Vec<vk::CommandPool>,
     command_buffers: Vec<vk::CommandBuffer>,
     fences: Vec<Fence>,
@@ -31,20 +28,18 @@ struct State {
 
 impl State {
     fn new(window: Option<Window>) -> Self {
-        // TODO: i don't like this mut for the sake of image creation
         let mut engine = mew::Engine::new(window.as_ref());
 
         let device = &engine.device;
 
-        let (draw_image, image_allocation) =
-            mew::create_image(&device, &mut engine.allocator, engine.swapchain.extent);
-
-        let draw_image_view = mew::create_image_view(
-            device,
-            draw_image,
+        let draw_image = mew::create_image(
+            &device,
+            &mut engine.allocator,
+            engine.swapchain.extent,
             vk::Format::R16G16B16A16_SFLOAT,
-            vk::ImageViewType::TYPE_2D,
-            mew::image_subresource_range(vk::ImageAspectFlags::COLOR),
+            vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_SRC,
+            vk::ImageAspectFlags::COLOR,
+            false,
         );
 
         let command_pool_info =
@@ -95,7 +90,7 @@ impl State {
                 .collect()
         };
 
-        // TODO: descriptors
+        // init descriptors
         let pool_size = vk::DescriptorPoolSize {
             ty: vk::DescriptorType::STORAGE_IMAGE,
             descriptor_count: 100,
@@ -107,7 +102,7 @@ impl State {
             .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
             .stage_flags(vk::ShaderStageFlags::ALL);
 
-        // this is part of bindless descriptors
+        // setup for bindless descriptors
         let descriptor_set_layout = mew::descriptors::create_descriptor_layouts(&device, binding);
         let storage_image_descriptor_counts = engine.swapchain.images.len() as u32 + 1;
         let descriptor_set = mew::descriptors::create_descriptor_sets(
@@ -121,7 +116,7 @@ impl State {
         let mut image_infos: Vec<vk::DescriptorImageInfo> =
             Vec::from([vk::DescriptorImageInfo::default()
                 .image_layout(vk::ImageLayout::GENERAL)
-                .image_view(draw_image_view)]);
+                .image_view(draw_image.view)]);
         engine.swapchain.views.iter().for_each(|image_view| {
             image_infos.push(
                 vk::DescriptorImageInfo::default()
@@ -139,7 +134,6 @@ impl State {
             device.update_descriptor_sets(&[storage_descriptor_write], &[]);
         }
 
-        // TODO: create fn for this
         let descriptor_set_layouts = [descriptor_set_layout];
         let push_constant_range = [vk::PushConstantRange::default()
             .stage_flags(vk::ShaderStageFlags::ALL)
@@ -170,9 +164,7 @@ impl State {
         let this = Self {
             window: window.unwrap(),
             engine,
-            image_allocation,
             draw_image,
-            draw_image_view,
             command_pools,
             command_buffers,
             fences,
@@ -212,11 +204,12 @@ impl Drop for State {
                 device.destroy_semaphore(*semaphore, None);
             });
 
+            // TODO: manually drop?
             // clean up allocator + resources
-            let allocation = std::mem::take(&mut self.image_allocation);
+            let allocation = std::mem::take(&mut self.draw_image.allocation);
             self.engine.allocator.free(allocation).unwrap();
-            device.destroy_image(self.draw_image, None);
-            device.destroy_image_view(self.draw_image_view, None);
+            device.destroy_image(self.draw_image.image, None);
+            device.destroy_image_view(self.draw_image.view, None);
 
             device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
             device.destroy_descriptor_pool(self.descriptor_pool, None);
@@ -414,7 +407,7 @@ fn render_loop(state: &mut State) {
     let mut image_memory_barriers: Vec<vk::ImageMemoryBarrier2> = Vec::new();
     image_memory_barriers.push(image_memory_barrier);
     // draw image
-    image_memory_barrier.image = state.draw_image;
+    image_memory_barrier.image = state.draw_image.image;
     image_memory_barrier.new_layout = vk::ImageLayout::GENERAL;
     image_memory_barriers.push(image_memory_barrier);
 
@@ -533,32 +526,28 @@ fn recreate_resources_on_swapchain_resize(state: &mut State) {
 
     // destroy outdated resources
     unsafe {
-        let allocation = std::mem::take(&mut state.image_allocation);
+        let allocation = std::mem::take(&mut state.draw_image.allocation);
         state.engine.allocator.free(allocation).unwrap();
-        device.destroy_image(state.draw_image, None);
-        device.destroy_image_view(state.draw_image_view, None);
+        device.destroy_image(state.draw_image.image, None);
+        device.destroy_image_view(state.draw_image.view, None);
     }
 
     // update resources
-    (state.draw_image, state.image_allocation) = mew::create_image(
+    state.draw_image = mew::create_image(
         &device,
         &mut state.engine.allocator,
         state.engine.swapchain.extent,
-    );
-
-    state.draw_image_view = mew::create_image_view(
-        device,
-        state.draw_image,
         vk::Format::R16G16B16A16_SFLOAT,
-        vk::ImageViewType::TYPE_2D,
-        mew::image_subresource_range(vk::ImageAspectFlags::COLOR),
+        vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_SRC,
+        vk::ImageAspectFlags::COLOR,
+        false
     );
 
     // update descriptor info
     let mut image_infos: Vec<vk::DescriptorImageInfo> =
         Vec::from([vk::DescriptorImageInfo::default()
             .image_layout(vk::ImageLayout::GENERAL)
-            .image_view(state.draw_image_view)]);
+            .image_view(state.draw_image.view)]);
     state.engine.swapchain.views.iter().for_each(|image_view| {
         image_infos.push(
             vk::DescriptorImageInfo::default()
