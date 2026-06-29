@@ -506,3 +506,31 @@ pub fn create_image(
 
     (image, allocation)
 }
+
+pub fn image_subresource_range(
+    aspect_mask: vk::ImageAspectFlags,
+) -> vk::ImageSubresourceRange {
+    vk::ImageSubresourceRange {
+        aspect_mask: aspect_mask,
+        base_mip_level: 0,
+        level_count: vk::REMAINING_MIP_LEVELS,
+        base_array_layer: 0,
+        layer_count: vk::REMAINING_ARRAY_LAYERS,
+    }
+}
+
+pub fn create_image_view(
+    device: &Device,
+    image: vk::Image,
+    format: vk::Format,
+    view_type: vk::ImageViewType,
+    subresource_range: vk::ImageSubresourceRange,
+) -> vk::ImageView {
+    let info = vk::ImageViewCreateInfo::default()
+        .image(image)
+        .view_type(view_type)
+        .format(format)
+        .subresource_range(subresource_range);
+
+    unsafe { device.create_image_view(&info, None).unwrap() }
+}

@@ -40,25 +40,13 @@ impl State {
         let (draw_image, image_allocation) =
             mew::create_image(&device, &mut engine.allocator, engine.swapchain_extent);
 
-        // TODO: create helper fn, and also create a Image container that holds allocation, vk::Image etc.
-        let image_view_info = vk::ImageViewCreateInfo::default()
-            .image(draw_image)
-            .view_type(vk::ImageViewType::TYPE_2D)
-            .format(vk::Format::R16G16B16A16_SFLOAT)
-            .components(vk::ComponentMapping {
-                r: vk::ComponentSwizzle::R,
-                g: vk::ComponentSwizzle::G,
-                b: vk::ComponentSwizzle::B,
-                a: vk::ComponentSwizzle::A,
-            })
-            .subresource_range(vk::ImageSubresourceRange {
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                base_mip_level: 0,
-                level_count: 1,
-                base_array_layer: 0,
-                layer_count: 1,
-            });
-        let draw_image_view = unsafe { device.create_image_view(&image_view_info, None).unwrap() };
+        let draw_image_view = mew::create_image_view(
+            device,
+            draw_image,
+            vk::Format::R16G16B16A16_SFLOAT,
+            vk::ImageViewType::TYPE_2D,
+            mew::image_subresource_range(vk::ImageAspectFlags::COLOR),
+        );
 
         let command_pool_info =
             vk::CommandPoolCreateInfo::default().queue_family_index(engine.queue_family_index);
@@ -314,25 +302,13 @@ impl ApplicationHandler for App {
                         state.engine.swapchain_extent,
                     );
 
-                    let image_view_info = vk::ImageViewCreateInfo::default()
-                        .image(state.draw_image)
-                        .view_type(vk::ImageViewType::TYPE_2D)
-                        .format(vk::Format::R16G16B16A16_SFLOAT)
-                        .components(vk::ComponentMapping {
-                            r: vk::ComponentSwizzle::R,
-                            g: vk::ComponentSwizzle::G,
-                            b: vk::ComponentSwizzle::B,
-                            a: vk::ComponentSwizzle::A,
-                        })
-                        .subresource_range(vk::ImageSubresourceRange {
-                            aspect_mask: vk::ImageAspectFlags::COLOR,
-                            base_mip_level: 0,
-                            level_count: 1,
-                            base_array_layer: 0,
-                            layer_count: 1,
-                        });
-                    state.draw_image_view =
-                        unsafe { device.create_image_view(&image_view_info, None).unwrap() };
+                    state.draw_image_view = mew::create_image_view(
+                        device,
+                        state.draw_image,
+                        vk::Format::R16G16B16A16_SFLOAT,
+                        vk::ImageViewType::TYPE_2D,
+                        mew::image_subresource_range(vk::ImageAspectFlags::COLOR),
+                    );
 
                     let mut image_infos: Vec<vk::DescriptorImageInfo> =
                         Vec::from([vk::DescriptorImageInfo::default()
@@ -650,30 +626,13 @@ fn update_swapchain(state: &mut State) {
         .swapchain_images
         .iter()
         .map(|&image| {
-            let image_view_info = vk::ImageViewCreateInfo::default()
-                .image(image)
-                .view_type(vk::ImageViewType::TYPE_2D)
-                .format(state.engine.swapchain_create_info.image_format)
-                .components(vk::ComponentMapping {
-                    r: vk::ComponentSwizzle::R,
-                    g: vk::ComponentSwizzle::G,
-                    b: vk::ComponentSwizzle::B,
-                    a: vk::ComponentSwizzle::A,
-                })
-                .subresource_range(vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    base_mip_level: 0,
-                    level_count: 1,
-                    base_array_layer: 0,
-                    layer_count: 1,
-                });
-            unsafe {
-                state
-                    .engine
-                    .device
-                    .create_image_view(&image_view_info, None)
-                    .unwrap()
-            }
+            mew::create_image_view(
+                &state.engine.device,
+                image,
+                state.engine.swapchain_create_info.image_format,
+                vk::ImageViewType::TYPE_2D,
+                mew::image_subresource_range(vk::ImageAspectFlags::COLOR),
+            )
         })
         .collect();
 
