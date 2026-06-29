@@ -17,22 +17,27 @@ use winit::{
 
 pub mod descriptors;
 
+pub struct Swapchain {
+    pub loader: swapchain::Device,
+    pub swapchain: SwapchainKHR,
+    pub format: vk::Format,
+    pub extent: vk::Extent2D,
+    pub images: Vec<vk::Image>,
+    pub views: Vec<vk::ImageView>,
+    pub dirty: bool,
+}
+
 pub struct Engine {
     pub entry: Entry,
     pub instance: Instance,
     pub surface: vk::SurfaceKHR,
     pub surface_loader: surface::Instance,
+    pub physical_device: vk::PhysicalDevice,
     pub device: Device,
     pub queue_family_index: u32,
     pub graphics_queue: Queue,
     pub allocator: ManuallyDrop<Allocator>,
-    pub swapchain_loader: swapchain::Device,
-    pub swapchain: SwapchainKHR,
-    pub swapchain_create_info: vk::SwapchainCreateInfoKHR<'static>,
-    pub swapchain_images: Vec<vk::Image>,
-    pub swapchain_image_views: Vec<vk::ImageView>,
-    pub swapchain_extent: vk::Extent2D,
-    pub swapchain_dirty: bool,
+    pub swapchain: Swapchain,
     pub debug_utils_loader: debug_utils::Instance,
     pub debug_callback: DebugUtilsMessengerEXT,
 }
@@ -223,28 +228,7 @@ impl Engine {
 
         let swapchain_loader = swapchain::Device::new(&instance, &device);
 
-        let surface_formats = unsafe {
-            surface_loader
-                .get_physical_device_surface_formats(pdevice, surface)
-                .unwrap()
-        };
-
-        let mut found_format: Option<vk::SurfaceFormatKHR> = None;
-        for formats in &surface_formats {
-            if formats.format == vk::Format::B8G8R8A8_UNORM
-            // if formats.format == vk::Format::B8G8R8A8_SRGB // this does not support STORAGE usage
-                && formats.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
-            {
-                found_format = Some(*formats);
-                break;
-            }
-        }
-
-        let surface_format = if let Some(format) = found_format {
-            format
-        } else {
-            surface_formats[0]
-        };
+        let swapchain_format = get_swapchain_format(&surface_loader, pdevice, surface);
 
         let surface_capabilities = unsafe {
             surface_loader
@@ -276,22 +260,13 @@ impl Engine {
         } else {
             surface_capabilities.current_transform
         };
-        let present_modes = unsafe {
-            surface_loader
-                .get_physical_device_surface_present_modes(pdevice, surface)
-                .unwrap()
-        };
-        let present_mode = present_modes
-            .iter()
-            .cloned()
-            .find(|&mode| mode == vk::PresentModeKHR::MAILBOX)
-            .unwrap_or(vk::PresentModeKHR::FIFO);
+
+        let present_mode = get_present_mode(&surface_loader, pdevice, surface);
 
         let swapchain_create_info = vk::SwapchainCreateInfoKHR::default()
             .surface(surface)
             .min_image_count(desired_image_count)
-            .image_color_space(surface_format.color_space)
-            .image_format(surface_format.format)
+            .image_format(swapchain_format)
             .image_extent(surface_resolution)
             .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::STORAGE)
             .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
@@ -314,7 +289,7 @@ impl Engine {
                 let image_view_info = vk::ImageViewCreateInfo::default()
                     .image(*image)
                     .view_type(vk::ImageViewType::TYPE_2D)
-                    .format(surface_format.format)
+                    .format(swapchain_format)
                     .components(vk::ComponentMapping {
                         r: vk::ComponentSwizzle::R,
                         g: vk::ComponentSwizzle::G,
@@ -332,24 +307,25 @@ impl Engine {
             })
             .collect();
 
-        let swapchain_extent = surface_resolution;
-
         Self {
             entry,
             instance,
             surface,
             surface_loader,
+            physical_device: pdevice,
             device,
             queue_family_index,
             graphics_queue,
             allocator: ManuallyDrop::new(allocator),
-            swapchain_loader,
-            swapchain,
-            swapchain_create_info,
-            swapchain_images,
-            swapchain_image_views,
-            swapchain_extent,
-            swapchain_dirty: false,
+            swapchain: Swapchain {
+                loader: swapchain_loader,
+                swapchain: swapchain,
+                format: swapchain_format,
+                extent: surface_resolution,
+                images: swapchain_images,
+                views: swapchain_image_views,
+                dirty: false,
+            },
             debug_utils_loader,
             debug_callback,
         }
@@ -359,10 +335,13 @@ impl Engine {
 impl Drop for Engine {
     fn drop(&mut self) {
         unsafe {
-            self.swapchain_loader
-                .destroy_swapchain(self.swapchain, None);
+            let swapchain = &self.swapchain;
 
-            self.swapchain_image_views.iter().for_each(|image_view| {
+            swapchain
+                .loader
+                .destroy_swapchain(swapchain.swapchain, None);
+
+            swapchain.views.iter().for_each(|image_view| {
                 self.device.destroy_image_view(*image_view, None);
             });
 
@@ -539,7 +518,48 @@ pub fn load_shader(device: &Device, path: &str) -> vk::ShaderModule {
     let mut spv: Vec<u8> = Vec::new();
     std::io::Read::read_to_end(&mut file, &mut spv).unwrap();
 
-    let code = ash::util::read_spv(&mut std::io::Cursor::new(&spv[..])).expect("Failed to read spv file");
+    let code =
+        ash::util::read_spv(&mut std::io::Cursor::new(&spv[..])).expect("Failed to read spv file");
     let create_info = vk::ShaderModuleCreateInfo::default().code(&code);
     unsafe { device.create_shader_module(&create_info, None).unwrap() }
+}
+
+pub fn get_swapchain_format(
+    surface_loader: &surface::Instance,
+    pdevice: vk::PhysicalDevice,
+    surface: vk::SurfaceKHR,
+) -> vk::Format {
+    let surface_formats = unsafe {
+        surface_loader
+            .get_physical_device_surface_formats(pdevice, surface)
+            .unwrap()
+    };
+
+    for formats in &surface_formats {
+        if formats.format == vk::Format::B8G8R8A8_UNORM
+        // if formats.format == vk::Format::B8G8R8A8_SRGB // this does not support STORAGE usage
+        {
+            return vk::Format::B8G8R8A8_UNORM;
+        }
+    }
+
+    surface_formats[0].format
+}
+
+pub fn get_present_mode(
+    surface_loader: &surface::Instance,
+    pdevice: vk::PhysicalDevice,
+    surface: vk::SurfaceKHR,
+) -> vk::PresentModeKHR {
+    let present_modes = unsafe {
+        surface_loader
+            .get_physical_device_surface_present_modes(pdevice, surface)
+            .unwrap()
+    };
+
+    present_modes
+        .iter()
+        .cloned()
+        .find(|&mode| mode == vk::PresentModeKHR::MAILBOX)
+        .unwrap_or(vk::PresentModeKHR::FIFO)
 }
