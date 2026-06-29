@@ -40,6 +40,7 @@ pub struct Engine {
     pub swapchain: Swapchain,
     pub debug_utils_loader: debug_utils::Instance,
     pub debug_callback: DebugUtilsMessengerEXT,
+    pub properties: vk::PhysicalDeviceProperties,
 }
 
 impl Engine {
@@ -307,6 +308,11 @@ impl Engine {
             })
             .collect();
 
+        let mut properties = vk::PhysicalDeviceProperties2::default();
+        unsafe {
+            instance.get_physical_device_properties2(pdevice, &mut properties);
+        }
+
         Self {
             entry,
             instance,
@@ -328,6 +334,7 @@ impl Engine {
             },
             debug_utils_loader,
             debug_callback,
+            properties: properties.properties,
         }
     }
 }
@@ -596,7 +603,11 @@ fn update_swapchain(engine: &mut Engine, new_extent: vk::Extent2D) {
         desired_image_count = surface_capabilities.max_image_count;
     }
 
-    engine.swapchain.format = get_swapchain_format(&engine.surface_loader, engine.physical_device, engine.surface);
+    engine.swapchain.format = get_swapchain_format(
+        &engine.surface_loader,
+        engine.physical_device,
+        engine.surface,
+    );
 
     // This check is necessary to avoid OOB validation error when falling back to x11
     let surface_resolution = match surface_capabilities.current_extent.width {

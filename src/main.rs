@@ -143,8 +143,7 @@ impl State {
         let descriptor_set_layouts = [descriptor_set_layout];
         let push_constant_range = [vk::PushConstantRange::default()
             .stage_flags(vk::ShaderStageFlags::ALL)
-            // .size(properties.properties.limits.max_push_constants_size)];
-            .size(256)]; // TODO: hardcoded
+            .size(engine.properties.limits.max_push_constants_size)];
         let pipeline_layout_info = vk::PipelineLayoutCreateInfo::default()
             .set_layouts(&descriptor_set_layouts)
             .push_constant_ranges(&push_constant_range);
