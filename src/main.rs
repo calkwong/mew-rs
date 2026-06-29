@@ -1,6 +1,5 @@
 use ash::vk::{self, Fence, Semaphore};
 use gpu_allocator::vulkan::*;
-use std::io::Cursor;
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
@@ -156,18 +155,8 @@ impl State {
         };
 
         // taken from ash
-        let mut spv_file = Cursor::new(&include_bytes!("../shaders/compiled/color.spv")[..]);
-        let code = ash::util::read_spv(&mut spv_file).expect("Failed to read spv file");
-        let create_info = vk::ShaderModuleCreateInfo::default().code(&code);
-        let color_shader_module =
-            unsafe { device.create_shader_module(&create_info, None).unwrap() };
-
-        let mut spv_file =
-            Cursor::new(&include_bytes!("../shaders/compiled/copy_swapchain.spv")[..]);
-        let code = ash::util::read_spv(&mut spv_file).expect("Failed to read spv file");
-        let create_info = vk::ShaderModuleCreateInfo::default().code(&code);
-        let copy_shader_module =
-            unsafe { device.create_shader_module(&create_info, None).unwrap() };
+        let color_shader_module = mew::load_shader(device, "shaders/compiled/color.spv");
+        let copy_shader_module = mew::load_shader(device, "shaders/compiled/copy_swapchain.spv");
 
         let color_pipeline =
             mew::create_compute_pipeline(&device, pipeline_layout, color_shader_module);

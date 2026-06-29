@@ -507,9 +507,7 @@ pub fn create_image(
     (image, allocation)
 }
 
-pub fn image_subresource_range(
-    aspect_mask: vk::ImageAspectFlags,
-) -> vk::ImageSubresourceRange {
+pub fn image_subresource_range(aspect_mask: vk::ImageAspectFlags) -> vk::ImageSubresourceRange {
     vk::ImageSubresourceRange {
         aspect_mask: aspect_mask,
         base_mip_level: 0,
@@ -533,4 +531,15 @@ pub fn create_image_view(
         .subresource_range(subresource_range);
 
     unsafe { device.create_image_view(&info, None).unwrap() }
+}
+
+pub fn load_shader(device: &Device, path: &str) -> vk::ShaderModule {
+    let mut file = std::fs::File::open(path).expect("Could not read / open file");
+
+    let mut spv: Vec<u8> = Vec::new();
+    std::io::Read::read_to_end(&mut file, &mut spv).unwrap();
+
+    let code = ash::util::read_spv(&mut std::io::Cursor::new(&spv[..])).expect("Failed to read spv file");
+    let create_info = vk::ShaderModuleCreateInfo::default().code(&code);
+    unsafe { device.create_shader_module(&create_info, None).unwrap() }
 }
