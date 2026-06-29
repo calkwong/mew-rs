@@ -345,7 +345,7 @@ impl Drop for Engine {
                 self.device.destroy_image_view(*image_view, None);
             });
 
-            dbg!(self.allocator.generate_report());
+            // dbg!(self.allocator.generate_report());
             ManuallyDrop::drop(&mut self.allocator);
 
             self.surface_loader.destroy_surface(self.surface, None);
@@ -600,7 +600,7 @@ fn update_swapchain(engine: &mut Engine) {
         .surface(engine.surface)
         .min_image_count(desired_image_count)
         .image_format(engine.swapchain.format)
-        .image_extent(engine.swapchain.extent)
+        .image_extent(surface_capabilities.current_extent)
         .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::STORAGE)
         .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
         .pre_transform(surface_capabilities.supported_transforms)

@@ -322,7 +322,10 @@ impl ApplicationHandler for App {
                         device.update_descriptor_sets(&[storage_descriptor_write], &[]);
                     }
 
-                    println!("WindowEvent::Resized: {}x{}", new_size.width, new_size.height);
+                    println!(
+                        "WindowEvent::Resized: {}x{}",
+                        new_size.width, new_size.height
+                    );
                 }
             }
             winit::event::WindowEvent::RedrawRequested => {
@@ -567,9 +570,9 @@ fn render_loop(state: &mut State) {
 }
 
 fn main() {
-    /* unsafe {
-        std::env::remove_var("WAYLAND_DISPLAY");
-    } */
+    // unsafe {
+    //     std::env::remove_var("WAYLAND_DISPLAY");
+    // }
 
     let event_loop = EventLoop::new().unwrap();
 
