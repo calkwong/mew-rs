@@ -564,16 +564,7 @@ pub fn get_present_mode(
         .unwrap_or(vk::PresentModeKHR::FIFO)
 }
 
-fn update_swapchain(engine: &mut Engine) {
-    let device = &engine.device;
-
-    engine.swapchain.views.iter().for_each(|image_view| unsafe {
-        device.destroy_image_view(*image_view, None);
-    });
-
-    engine.swapchain.views.clear();
-    engine.swapchain.images.clear();
-
+fn update_swapchain(engine: &mut Engine, new_extent: vk::Extent2D) {
     let old_swapchain_handle = engine.swapchain.swapchain;
 
     let surface_capabilities = unsafe {
@@ -581,6 +572,15 @@ fn update_swapchain(engine: &mut Engine) {
             .surface_loader
             .get_physical_device_surface_capabilities(engine.physical_device, engine.surface)
             .unwrap()
+    };
+
+    let pre_transform = if surface_capabilities
+        .supported_transforms
+        .contains(vk::SurfaceTransformFlagsKHR::IDENTITY)
+    {
+        vk::SurfaceTransformFlagsKHR::IDENTITY
+    } else {
+        surface_capabilities.current_transform
     };
 
     let present_mode = get_present_mode(
@@ -596,14 +596,17 @@ fn update_swapchain(engine: &mut Engine) {
         desired_image_count = surface_capabilities.max_image_count;
     }
 
+    engine.swapchain.format = get_swapchain_format(&engine.surface_loader, engine.physical_device, engine.surface);
+    engine.swapchain.extent = new_extent;
+
     let swapchain_create_info = vk::SwapchainCreateInfoKHR::default()
         .surface(engine.surface)
         .min_image_count(desired_image_count)
         .image_format(engine.swapchain.format)
-        .image_extent(surface_capabilities.current_extent)
+        .image_extent(engine.swapchain.extent)
         .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::STORAGE)
         .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
-        .pre_transform(surface_capabilities.supported_transforms)
+        .pre_transform(pre_transform)
         .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
         .present_mode(present_mode)
         .clipped(true)
@@ -623,6 +626,7 @@ fn update_swapchain(engine: &mut Engine) {
             .destroy_swapchain(old_swapchain_handle, None);
     }
 
+    engine.swapchain.images.clear();
     engine.swapchain.images = unsafe {
         engine
             .swapchain
@@ -630,21 +634,6 @@ fn update_swapchain(engine: &mut Engine) {
             .get_swapchain_images(engine.swapchain.swapchain)
             .unwrap()
     };
-
-    engine.swapchain.views = engine
-        .swapchain
-        .images
-        .iter()
-        .map(|&image| {
-            create_image_view(
-                &engine.device,
-                image,
-                engine.swapchain.format,
-                vk::ImageViewType::TYPE_2D,
-                image_subresource_range(vk::ImageAspectFlags::COLOR),
-            )
-        })
-        .collect();
 }
 
 pub fn recreate_swapchain(engine: &mut Engine, new_extent: vk::Extent2D) {
@@ -652,6 +641,26 @@ pub fn recreate_swapchain(engine: &mut Engine, new_extent: vk::Extent2D) {
         engine.device.device_wait_idle().unwrap();
     }
 
-    engine.swapchain.extent = new_extent;
-    update_swapchain(engine);
+    update_swapchain(engine, new_extent);
+
+    let swapchain = &mut engine.swapchain;
+
+    swapchain.views.iter().for_each(|image_view| unsafe {
+        engine.device.destroy_image_view(*image_view, None);
+    });
+
+    swapchain.views.clear();
+    swapchain.views = swapchain
+        .images
+        .iter()
+        .map(|&image| {
+            create_image_view(
+                &engine.device,
+                image,
+                swapchain.format,
+                vk::ImageViewType::TYPE_2D,
+                image_subresource_range(vk::ImageAspectFlags::COLOR),
+            )
+        })
+        .collect();
 }

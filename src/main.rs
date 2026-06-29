@@ -265,66 +265,22 @@ impl ApplicationHandler for App {
         event: WindowEvent,
     ) {
         match event {
-            winit::event::WindowEvent::Resized(new_size) => {
+            // This should be providing us with new dims, but it's returning outdated dims which can cause OOB surface extent - possibly Niri specific?
+            winit::event::WindowEvent::Resized(_) => {
                 if let Some(state) = self.state.as_mut() {
+                    let window_size = state.window.inner_size();
                     let new_extent = vk::Extent2D {
-                        width: new_size.width,
-                        height: new_size.height,
+                        width: window_size.width,
+                        height: window_size.height,
                     };
 
                     mew::recreate_swapchain(&mut state.engine, new_extent);
 
-                    let device = &state.engine.device;
-
-                    // destroy outdated resources
-                    unsafe {
-                        let allocation = std::mem::take(&mut state.image_allocation);
-                        state.engine.allocator.free(allocation).unwrap();
-                        device.destroy_image(state.draw_image, None);
-                        device.destroy_image_view(state.draw_image_view, None);
-                    }
-
-                    // update resources
-                    (state.draw_image, state.image_allocation) = mew::create_image(
-                        &device,
-                        &mut state.engine.allocator,
-                        state.engine.swapchain.extent,
-                    );
-
-                    state.draw_image_view = mew::create_image_view(
-                        device,
-                        state.draw_image,
-                        vk::Format::R16G16B16A16_SFLOAT,
-                        vk::ImageViewType::TYPE_2D,
-                        mew::image_subresource_range(vk::ImageAspectFlags::COLOR),
-                    );
-
-                    let mut image_infos: Vec<vk::DescriptorImageInfo> =
-                        Vec::from([vk::DescriptorImageInfo::default()
-                            .image_layout(vk::ImageLayout::GENERAL)
-                            .image_view(state.draw_image_view)]);
-                    state.engine.swapchain.views.iter().for_each(|image_view| {
-                        image_infos.push(
-                            vk::DescriptorImageInfo::default()
-                                .image_layout(vk::ImageLayout::GENERAL)
-                                .image_view(*image_view),
-                        );
-                    });
-                    let storage_image_descriptor_counts =
-                        state.engine.swapchain.images.len() as u32 + 1;
-                    let storage_descriptor_write = vk::WriteDescriptorSet::default()
-                        .dst_set(state.descriptor_set)
-                        .dst_binding(0)
-                        .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
-                        .image_info(&image_infos)
-                        .descriptor_count(storage_image_descriptor_counts);
-                    unsafe {
-                        device.update_descriptor_sets(&[storage_descriptor_write], &[]);
-                    }
+                    recreate_resources_on_swapchain_resize(state);
 
                     println!(
-                        "WindowEvent::Resized: {}x{}",
-                        new_size.width, new_size.height
+                        "Swapchain resize: {}x{}",
+                        window_size.width, window_size.height
                     );
                 }
             }
@@ -567,6 +523,60 @@ fn render_loop(state: &mut State) {
     };
 
     state.frame_index += 1;
+}
+
+// This is project specific
+fn recreate_resources_on_swapchain_resize(state: &mut State) {
+    let device = &state.engine.device;
+
+    // destroy outdated resources
+    unsafe {
+        let allocation = std::mem::take(&mut state.image_allocation);
+        state.engine.allocator.free(allocation).unwrap();
+        device.destroy_image(state.draw_image, None);
+        device.destroy_image_view(state.draw_image_view, None);
+    }
+
+    // update resources
+    (state.draw_image, state.image_allocation) = mew::create_image(
+        &device,
+        &mut state.engine.allocator,
+        state.engine.swapchain.extent,
+    );
+
+    state.draw_image_view = mew::create_image_view(
+        device,
+        state.draw_image,
+        vk::Format::R16G16B16A16_SFLOAT,
+        vk::ImageViewType::TYPE_2D,
+        mew::image_subresource_range(vk::ImageAspectFlags::COLOR),
+    );
+
+    // update descriptor info
+    let mut image_infos: Vec<vk::DescriptorImageInfo> =
+        Vec::from([vk::DescriptorImageInfo::default()
+            .image_layout(vk::ImageLayout::GENERAL)
+            .image_view(state.draw_image_view)]);
+    state.engine.swapchain.views.iter().for_each(|image_view| {
+        image_infos.push(
+            vk::DescriptorImageInfo::default()
+                .image_layout(vk::ImageLayout::GENERAL)
+                .image_view(*image_view),
+        );
+    });
+
+    let storage_image_descriptor_counts = image_infos.len();
+
+    // update descriptors
+    let storage_descriptor_write = vk::WriteDescriptorSet::default()
+        .dst_set(state.descriptor_set)
+        .dst_binding(0)
+        .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+        .image_info(&image_infos)
+        .descriptor_count(storage_image_descriptor_counts as u32);
+    unsafe {
+        device.update_descriptor_sets(&[storage_descriptor_write], &[]);
+    }
 }
 
 fn main() {
