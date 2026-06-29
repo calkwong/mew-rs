@@ -563,3 +563,95 @@ pub fn get_present_mode(
         .find(|&mode| mode == vk::PresentModeKHR::MAILBOX)
         .unwrap_or(vk::PresentModeKHR::FIFO)
 }
+
+fn update_swapchain(engine: &mut Engine) {
+    let device = &engine.device;
+
+    engine.swapchain.views.iter().for_each(|image_view| unsafe {
+        device.destroy_image_view(*image_view, None);
+    });
+
+    engine.swapchain.views.clear();
+    engine.swapchain.images.clear();
+
+    let old_swapchain_handle = engine.swapchain.swapchain;
+
+    let surface_capabilities = unsafe {
+        engine
+            .surface_loader
+            .get_physical_device_surface_capabilities(engine.physical_device, engine.surface)
+            .unwrap()
+    };
+
+    let present_mode = get_present_mode(
+        &engine.surface_loader,
+        engine.physical_device,
+        engine.surface,
+    );
+
+    let mut desired_image_count = surface_capabilities.min_image_count + 1;
+    if surface_capabilities.max_image_count > 0
+        && desired_image_count > surface_capabilities.max_image_count
+    {
+        desired_image_count = surface_capabilities.max_image_count;
+    }
+
+    let swapchain_create_info = vk::SwapchainCreateInfoKHR::default()
+        .surface(engine.surface)
+        .min_image_count(desired_image_count)
+        .image_format(engine.swapchain.format)
+        .image_extent(engine.swapchain.extent)
+        .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::STORAGE)
+        .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
+        .pre_transform(surface_capabilities.supported_transforms)
+        .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
+        .present_mode(present_mode)
+        .clipped(true)
+        .image_array_layers(1)
+        .old_swapchain(old_swapchain_handle);
+
+    unsafe {
+        engine.swapchain.swapchain = engine
+            .swapchain
+            .loader
+            .create_swapchain(&swapchain_create_info, None)
+            .unwrap();
+
+        engine
+            .swapchain
+            .loader
+            .destroy_swapchain(old_swapchain_handle, None);
+    }
+
+    engine.swapchain.images = unsafe {
+        engine
+            .swapchain
+            .loader
+            .get_swapchain_images(engine.swapchain.swapchain)
+            .unwrap()
+    };
+
+    engine.swapchain.views = engine
+        .swapchain
+        .images
+        .iter()
+        .map(|&image| {
+            create_image_view(
+                &engine.device,
+                image,
+                engine.swapchain.format,
+                vk::ImageViewType::TYPE_2D,
+                image_subresource_range(vk::ImageAspectFlags::COLOR),
+            )
+        })
+        .collect();
+}
+
+pub fn recreate_swapchain(engine: &mut Engine, new_extent: vk::Extent2D) {
+    unsafe {
+        engine.device.device_wait_idle().unwrap();
+    }
+
+    engine.swapchain.extent = new_extent;
+    update_swapchain(engine);
+}

@@ -267,12 +267,12 @@ impl ApplicationHandler for App {
         match event {
             winit::event::WindowEvent::Resized(new_size) => {
                 if let Some(state) = self.state.as_mut() {
-                    state.engine.swapchain.extent = vk::Extent2D {
+                    let new_extent = vk::Extent2D {
                         width: new_size.width,
                         height: new_size.height,
                     };
 
-                    update_swapchain(state);
+                    mew::recreate_swapchain(&mut state.engine, new_extent);
 
                     let device = &state.engine.device;
 
@@ -564,106 +564,6 @@ fn render_loop(state: &mut State) {
     };
 
     state.frame_index += 1;
-}
-
-fn update_swapchain(state: &mut State) {
-    let device = &state.engine.device;
-
-    unsafe {
-        device.device_wait_idle().unwrap();
-    }
-
-    state
-        .engine
-        .swapchain
-        .views
-        .iter()
-        .for_each(|image_view| unsafe {
-            device.destroy_image_view(*image_view, None);
-        });
-
-    state.engine.swapchain.views.clear();
-    state.engine.swapchain.images.clear();
-
-    let old_swapchain_handle = state.engine.swapchain.swapchain;
-
-    let surface_capabilities = unsafe {
-        state
-            .engine
-            .surface_loader
-            .get_physical_device_surface_capabilities(
-                state.engine.physical_device,
-                state.engine.surface,
-            )
-            .unwrap()
-    };
-
-    let present_mode = mew::get_present_mode(
-        &state.engine.surface_loader,
-        state.engine.physical_device,
-        state.engine.surface,
-    );
-
-    let mut desired_image_count = surface_capabilities.min_image_count + 1;
-    if surface_capabilities.max_image_count > 0
-        && desired_image_count > surface_capabilities.max_image_count
-    {
-        desired_image_count = surface_capabilities.max_image_count;
-    }
-
-    let swapchain_create_info = vk::SwapchainCreateInfoKHR::default()
-        .surface(state.engine.surface)
-        .min_image_count(desired_image_count)
-        .image_format(state.engine.swapchain.format)
-        .image_extent(state.engine.swapchain.extent)
-        .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::STORAGE)
-        .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
-        .pre_transform(surface_capabilities.supported_transforms)
-        .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
-        .present_mode(present_mode)
-        .clipped(true)
-        .image_array_layers(1)
-        .old_swapchain(old_swapchain_handle);
-
-    unsafe {
-        state.engine.swapchain.swapchain = state
-            .engine
-            .swapchain
-            .loader
-            .create_swapchain(&swapchain_create_info, None)
-            .unwrap();
-
-        state
-            .engine
-            .swapchain
-            .loader
-            .destroy_swapchain(old_swapchain_handle, None);
-    }
-
-    state.engine.swapchain.images = unsafe {
-        state
-            .engine
-            .swapchain
-            .loader
-            .get_swapchain_images(state.engine.swapchain.swapchain)
-            .unwrap()
-    };
-
-    state.engine.swapchain.views = state
-        .engine
-        .swapchain
-        .images
-        .iter()
-        .map(|&image| {
-            mew::create_image_view(
-                &state.engine.device,
-                image,
-                state.engine.swapchain.format,
-                vk::ImageViewType::TYPE_2D,
-                mew::image_subresource_range(vk::ImageAspectFlags::COLOR),
-            )
-        })
-        .collect();
 }
 
 fn main() {
