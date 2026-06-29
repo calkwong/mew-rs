@@ -604,9 +604,16 @@ fn update_swapchain(state: &mut State) {
         state.engine.surface,
     );
 
+    let mut desired_image_count = surface_capabilities.min_image_count + 1;
+    if surface_capabilities.max_image_count > 0
+        && desired_image_count > surface_capabilities.max_image_count
+    {
+        desired_image_count = surface_capabilities.max_image_count;
+    }
+
     let swapchain_create_info = vk::SwapchainCreateInfoKHR::default()
         .surface(state.engine.surface)
-        .min_image_count(surface_capabilities.min_image_count)
+        .min_image_count(desired_image_count)
         .image_format(state.engine.swapchain.format)
         .image_extent(state.engine.swapchain.extent)
         .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::STORAGE)
