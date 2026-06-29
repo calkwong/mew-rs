@@ -275,7 +275,6 @@ impl ApplicationHandler for App {
                     };
 
                     mew::recreate_swapchain(&mut state.engine, new_extent);
-
                     recreate_resources_on_swapchain_resize(state);
 
                     println!(
@@ -289,16 +288,20 @@ impl ApplicationHandler for App {
                     render_loop(state);
 
                     if state.engine.swapchain.dirty {
-                        let new_size = state.window.inner_size();
-                        if new_size.width == state.engine.swapchain.extent.width
-                            && new_size.height == state.engine.swapchain.extent.height
+                        let window_size = state.window.inner_size();
+                        if window_size.width == state.engine.swapchain.extent.width
+                            && window_size.height == state.engine.swapchain.extent.height
                         {
                             state.engine.swapchain.dirty = false;
                             return;
                         }
 
-                        // this definitely panics on x11
-                        todo!("Handle legitimate OUT_OF_DATE_KHR or SUBOPTIMAL_KHR");
+                        let new_extent = vk::Extent2D {
+                            width: window_size.width as u32,
+                            height: window_size.height as u32,
+                        };
+                        mew::recreate_swapchain(&mut state.engine, new_extent);
+                        recreate_resources_on_swapchain_resize(state);
                     }
                 }
             }
@@ -381,7 +384,7 @@ fn render_loop(state: &mut State) {
             Ok((present_idx, _)) => {
                 swapchain_idx = present_idx as usize;
             }
-            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) | Err(vk::Result::SUBOPTIMAL_KHR) => {
                 state.engine.swapchain.dirty = true;
                 return;
             }
@@ -512,7 +515,7 @@ fn render_loop(state: &mut State) {
 
         match present_result {
             Ok(_) => {}
-            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) | Err(vk::Result::SUBOPTIMAL_KHR) => {
                 state.engine.swapchain.dirty = true;
                 return;
             }

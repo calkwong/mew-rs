@@ -597,7 +597,13 @@ fn update_swapchain(engine: &mut Engine, new_extent: vk::Extent2D) {
     }
 
     engine.swapchain.format = get_swapchain_format(&engine.surface_loader, engine.physical_device, engine.surface);
-    engine.swapchain.extent = new_extent;
+
+    // This check is necessary to avoid OOB validation error when falling back to x11
+    let surface_resolution = match surface_capabilities.current_extent.width {
+        u32::MAX => new_extent,
+        _ => surface_capabilities.current_extent,
+    };
+    engine.swapchain.extent = surface_resolution;
 
     let swapchain_create_info = vk::SwapchainCreateInfoKHR::default()
         .surface(engine.surface)
