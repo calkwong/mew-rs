@@ -434,6 +434,83 @@ pub fn create_compute_pipeline(
     pipelines[0]
 }
 
+pub fn create_graphics_pipeline(
+    device: &Device,
+    layout: vk::PipelineLayout,
+    module: vk::ShaderModule,
+    // TODO:
+    _shader_stages: vk::ShaderStageFlags,
+    format: vk::Format,
+) -> vk::Pipeline {
+    let shader_stage_info = [
+        vk::PipelineShaderStageCreateInfo::default()
+            .name(c"vs_main")
+            .module(module)
+            .stage(vk::ShaderStageFlags::VERTEX),
+        vk::PipelineShaderStageCreateInfo::default()
+            .name(c"ps_main")
+            .module(module)
+            .stage(vk::ShaderStageFlags::FRAGMENT),
+    ];
+
+    let formats = [format];
+    let mut rendering_create_info = vk::PipelineRenderingCreateInfo::default()
+        .color_attachment_formats(&formats)
+        .depth_attachment_format(vk::Format::D32_SFLOAT);
+    let mut create_flags_info = vk::PipelineCreateFlags2CreateInfoKHR {
+        p_next: <*mut _>::cast(&mut rendering_create_info),
+        ..Default::default()
+    };
+
+    let attachments = [vk::PipelineColorBlendAttachmentState::default()
+        .color_write_mask(vk::ColorComponentFlags::RGBA)];
+
+    let color_blend_state = vk::PipelineColorBlendStateCreateInfo::default()
+        .logic_op(vk::LogicOp::COPY)
+        .attachments(&attachments);
+
+    let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+    let dynamic_state =
+        vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
+
+    let input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo::default()
+        .topology(vk::PrimitiveTopology::TRIANGLE_LIST);
+
+    let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo::default()
+        .min_depth_bounds(1.0)
+        .max_depth_bounds(0.0)
+        .depth_compare_op(vk::CompareOp::GREATER_OR_EQUAL)
+        .depth_test_enable(true)
+        .depth_write_enable(true);
+
+    let multisample_state = vk::PipelineMultisampleStateCreateInfo::default()
+        .min_sample_shading(1.0)
+        .rasterization_samples(vk::SampleCountFlags::TYPE_1);
+
+    let rasterization_state = vk::PipelineRasterizationStateCreateInfo::default()
+        .cull_mode(vk::CullModeFlags::BACK)
+        .line_width(1.0);
+
+    let pipeline_info = vk::GraphicsPipelineCreateInfo::default()
+        .color_blend_state(&color_blend_state)
+        .depth_stencil_state(&depth_stencil_state)
+        .dynamic_state(&dynamic_state)
+        .input_assembly_state(&input_assembly_state)
+        .layout(layout)
+        .multisample_state(&multisample_state)
+        .rasterization_state(&rasterization_state)
+        .stages(&shader_stage_info)
+        .push_next(&mut create_flags_info);
+
+    let pipelines = unsafe {
+        device
+            .create_graphics_pipelines(vk::PipelineCache::null(), &[pipeline_info], None)
+            .unwrap()
+    };
+
+    pipelines[0]
+}
+
 pub fn push_constants<T>(
     device: &Device,
     cmd: vk::CommandBuffer,
