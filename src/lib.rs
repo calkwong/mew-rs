@@ -16,6 +16,7 @@ use winit::{
 };
 
 pub mod descriptors;
+pub mod loader;
 
 pub struct Swapchain {
     pub loader: swapchain::Device,

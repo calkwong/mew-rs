@@ -1,3 +1,4 @@
 /target
 .ninja_log
 *.spv
+/assets

@@ -575,6 +575,9 @@ fn main() {
     //     std::env::remove_var("WAYLAND_DISPLAY");
     // }
 
+    let gltf_path = std::env::args().nth(1).unwrap();
+    let _scene = mew::loader::load_gltf(&gltf_path);
+
     let event_loop = EventLoop::new().unwrap();
 
     event_loop.set_control_flow(ControlFlow::Poll);

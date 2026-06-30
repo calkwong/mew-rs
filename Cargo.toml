@@ -8,3 +8,5 @@ winit = { version = "0.30.13", features = ["rwh_06"] }
 ash-window = "0.13.0"
 ash = { version = "0.38.0", default-features = false, features = ["linked", "std"] }
 gpu-allocator = { version = "0.28.0", default-features = false, features = ["std", "vulkan"] }
+goth-gltf = "0.3.0"
+glam = "0.33.2"
