@@ -204,12 +204,9 @@ impl Drop for State {
                 device.destroy_semaphore(*semaphore, None);
             });
 
-            // TODO: manually drop?
             // clean up allocator + resources
-            let allocation = std::mem::take(&mut self.draw_image.allocation);
-            self.engine.allocator.free(allocation).unwrap();
-            device.destroy_image(self.draw_image.image, None);
-            device.destroy_image_view(self.draw_image.view, None);
+            // TODO: consider drop or ManuallyDrop image?
+            mew::destroy_image(device, &mut self.engine.allocator, &mut self.draw_image);
 
             device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
             device.destroy_descriptor_pool(self.descriptor_pool, None);
@@ -525,12 +522,7 @@ fn recreate_resources_on_swapchain_resize(state: &mut State) {
     let device = &state.engine.device;
 
     // destroy outdated resources
-    unsafe {
-        let allocation = std::mem::take(&mut state.draw_image.allocation);
-        state.engine.allocator.free(allocation).unwrap();
-        device.destroy_image(state.draw_image.image, None);
-        device.destroy_image_view(state.draw_image.view, None);
-    }
+    mew::destroy_image(device, &mut state.engine.allocator, &mut state.draw_image);
 
     // update resources
     state.draw_image = mew::create_image(

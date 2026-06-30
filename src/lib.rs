@@ -4,7 +4,10 @@ use ash::{
     Device, Entry, Instance,
     ext::debug_utils,
     khr::{surface, swapchain},
-    vk::{self, DebugUtilsMessengerEXT, Queue, SwapchainKHR},
+    vk::{
+        self, DebugUtilsMessengerEXT, Queue,
+        SwapchainKHR,
+    },
 };
 use ash_window;
 use gpu_allocator::MemoryLocation;
@@ -34,6 +37,13 @@ pub struct Image {
     pub format: vk::Format,
     pub extent: vk::Extent2D,
     pub allocation: Allocation,
+}
+
+pub struct Buffer {
+    pub buffer: vk::Buffer,
+    pub address: vk::DeviceAddress,
+    pub allocation: Allocation,
+    pub size: vk::DeviceSize,
 }
 
 pub struct Engine {
@@ -461,6 +471,45 @@ pub fn giga_barrier(device: &Device, cmd: vk::CommandBuffer) {
     unsafe { device.cmd_pipeline_barrier2(cmd, &dependency_info) };
 }
 
+pub fn create_buffer(
+    device: &Device,
+    allocator: &mut Allocator,
+    memory_location: gpu_allocator::MemoryLocation,
+    flags: vk::BufferUsageFlags,
+    size: u64,
+) -> Buffer {
+    let buffer_info = vk::BufferCreateInfo::default().usage(flags).size(size);
+    let buffer = unsafe { device.create_buffer(&buffer_info, None).unwrap() };
+
+    let requirements = unsafe { device.get_buffer_memory_requirements(buffer) };
+
+    let allocation = allocator
+        .allocate(&AllocationCreateDesc {
+            name: "Buffer allocation",
+            requirements,
+            location: memory_location,
+            linear: false,
+            allocation_scheme: AllocationScheme::GpuAllocatorManaged,
+        })
+        .unwrap();
+
+    unsafe {
+        device
+            .bind_buffer_memory(buffer, allocation.memory(), allocation.offset())
+            .unwrap()
+    };
+
+    Buffer {
+        buffer,
+        address: get_buffer_address(device, buffer),
+        allocation,
+        size,
+    }
+}
+
+// pub fn destroy_buffer(device: &Device, buffer: Buffer) {
+// }
+
 pub fn create_image(
     device: &Device,
     allocator: &mut Allocator,
@@ -488,7 +537,7 @@ pub fn create_image(
 
     let allocation = allocator
         .allocate(&AllocationCreateDesc {
-            name: "Example allocation",
+            name: "Image allocation",
             requirements,
             location: MemoryLocation::GpuOnly,
             linear: false,
@@ -516,6 +565,15 @@ pub fn create_image(
         format,
         extent,
         allocation,
+    }
+}
+
+pub fn destroy_image(device: &Device, allocator: &mut Allocator, image: &mut Image) {
+    unsafe {
+        let allocation = std::mem::take(&mut image.allocation);
+        allocator.free(allocation).unwrap();
+        device.destroy_image(image.image, None);
+        device.destroy_image_view(image.view, None);
     }
 }
 
@@ -706,4 +764,10 @@ pub fn recreate_swapchain(engine: &mut Engine, new_extent: vk::Extent2D) {
             )
         })
         .collect();
+}
+
+fn get_buffer_address(device: &Device, buffer: vk::Buffer) -> vk::DeviceAddress {
+    let buffer_address_info = vk::BufferDeviceAddressInfo::default().buffer(buffer);
+
+    unsafe { device.get_buffer_device_address(&buffer_address_info) }
 }
