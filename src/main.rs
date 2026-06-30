@@ -25,6 +25,8 @@ struct State {
     descriptor_pool: vk::DescriptorPool,
     descriptor_set_layout: vk::DescriptorSetLayout,
     vertex_buffer: mew::Buffer,
+    index_buffer: mew::Buffer,
+    object_buffer: mew::Buffer,
 }
 
 impl State {
@@ -164,8 +166,8 @@ impl State {
 
         let gltf_path = std::env::args().nth(1).unwrap();
         let scene = mew::loader::load_gltf(&gltf_path);
-        let vertices = unsafe { std::slice::from_raw_parts(scene.vertices.as_ptr() as *const u8, scene.vertices.len()) };
 
+        let vertices = unsafe { std::slice::from_raw_parts(scene.vertices.as_ptr() as *const u8, scene.vertices.len()) };
         let vertex_buffer = mew::create_buffer_with_data(
             device,
             engine.graphics_queue,
@@ -177,6 +179,34 @@ impl State {
             vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS | vk::BufferUsageFlags::TRANSFER_DST,
             (scene.vertices.len() * std::mem::size_of_val(&scene.vertices[0])) as u64,
             vertices,
+        );
+
+        let indices = unsafe { std::slice::from_raw_parts(scene.indices.as_ptr() as *const u8, scene.indices.len()) };
+        let index_buffer = mew::create_buffer_with_data(
+            device,
+            engine.graphics_queue,
+            fences[0],
+            command_pools[0],
+            command_buffers[0],
+            &mut engine.allocator,
+            gpu_allocator::MemoryLocation::GpuOnly,
+            vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS | vk::BufferUsageFlags::TRANSFER_DST,
+            (scene.indices.len() * std::mem::size_of_val(&scene.indices[0])) as u64,
+            indices,
+        );
+
+        let objects = unsafe { std::slice::from_raw_parts(scene.renderables.as_ptr() as *const u8, scene.renderables.len()) };
+        let object_buffer = mew::create_buffer_with_data(
+            device,
+            engine.graphics_queue,
+            fences[0],
+            command_pools[0],
+            command_buffers[0],
+            &mut engine.allocator,
+            gpu_allocator::MemoryLocation::GpuOnly,
+            vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS | vk::BufferUsageFlags::TRANSFER_DST,
+            (scene.renderables.len() * std::mem::size_of_val(&scene.renderables[0])) as u64,
+            objects,
         );
 
         let this = Self {
@@ -196,6 +226,8 @@ impl State {
             descriptor_pool,
             descriptor_set_layout,
             vertex_buffer,
+            index_buffer,
+            object_buffer,
         };
 
         this
@@ -227,6 +259,8 @@ impl Drop for State {
             // TODO: consider drop or ManuallyDrop image?
             mew::destroy_image(device, &mut self.engine.allocator, &mut self.draw_image);
             mew::destroy_buffer(device, &mut self.engine.allocator, &mut self.vertex_buffer);
+            mew::destroy_buffer(device, &mut self.engine.allocator, &mut self.index_buffer);
+            mew::destroy_buffer(device, &mut self.engine.allocator, &mut self.object_buffer);
 
             device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
             device.destroy_descriptor_pool(self.descriptor_pool, None);

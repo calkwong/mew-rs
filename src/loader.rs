@@ -8,6 +8,11 @@ pub struct Scene {
     pub indices: Vec<u32>,
     pub nodes: Vec<Node>,
     pub node_transforms: Vec<NodeTransform>,
+    pub renderables: Vec<ObjectData>,
+}
+
+pub struct ObjectData {
+    world_transform: mat4x4,
 }
 
 pub struct Node {
@@ -28,6 +33,8 @@ pub struct MeshAsset {
 
 pub struct Mesh {
     vertex_offset: u32,
+    first_index: u32,
+    index_count: u32,
 }
 
 pub struct Vertex {
@@ -40,7 +47,7 @@ fn get_indices(
     buffer_data: &[u8],
     out_buffer: &mut Vec<u32>,
     accessor_index: usize,
-) {
+) -> u32 {
     let accessor = &gltf.accessors[accessor_index];
     let buffer_view = &gltf.buffer_views[accessor.buffer_view.unwrap()];
 
@@ -68,6 +75,8 @@ fn get_indices(
 
         index + index_offset
     }));
+
+    count as u32
 }
 
 fn get_positions(
@@ -184,12 +193,15 @@ pub fn load_gltf(path: &str) -> Scene {
 
         for primitive in &m.primitives {
             let indices_idx = primitive.indices.unwrap();
-            get_indices(&gltf, buffer_data, &mut indices, indices_idx);
+            let first_index = indices.len() as u32;
+            let index_count = get_indices(&gltf, buffer_data, &mut indices, indices_idx);
             // indices.iter().for_each(|index| println!("{index}"));
 
             // For global combined index buffer
             meshes.push(Mesh {
                 vertex_offset: positions.len() as u32,
+                index_count,
+                first_index,
             });
 
             let positions_idx = primitive.attributes.position.unwrap();
@@ -262,11 +274,19 @@ pub fn load_gltf(path: &str) -> Scene {
         refresh_transform(&nodes, &mut node_transforms, *child_index, mat4x4::IDENTITY);
     }
 
+    let renderables: Vec<ObjectData> = node_transforms
+        .iter()
+        .map(|transform| ObjectData {
+            world_transform: transform.world_transform,
+        })
+        .collect();
+
     Scene {
         vertices,
         indices,
         nodes,
         node_transforms,
+        renderables,
     }
 }
 
