@@ -12,6 +12,7 @@ struct State {
     window: Window,
     engine: mew::Engine,
     draw_image: mew::Image,
+    depth_image: mew::Image,
     command_pools: Vec<vk::CommandPool>,
     command_buffers: Vec<vk::CommandBuffer>,
     fences: Vec<Fence>,
@@ -42,6 +43,16 @@ impl State {
             vk::Format::R16G16B16A16_SFLOAT,
             vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_SRC,
             vk::ImageAspectFlags::COLOR,
+            false,
+        );
+
+        let depth_image = mew::create_image(
+            &device,
+            &mut engine.allocator,
+            engine.swapchain.extent,
+            vk::Format::D32_SFLOAT,
+            vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+            vk::ImageAspectFlags::DEPTH,
             false,
         );
 
@@ -213,6 +224,7 @@ impl State {
             window: window.unwrap(),
             engine,
             draw_image,
+            depth_image,
             command_pools,
             command_buffers,
             fences,
@@ -258,6 +270,7 @@ impl Drop for State {
             // clean up allocator + resources
             // TODO: consider drop or ManuallyDrop image?
             mew::destroy_image(device, &mut self.engine.allocator, &mut self.draw_image);
+            mew::destroy_image(device, &mut self.engine.allocator, &mut self.depth_image);
             mew::destroy_buffer(device, &mut self.engine.allocator, &mut self.vertex_buffer);
             mew::destroy_buffer(device, &mut self.engine.allocator, &mut self.index_buffer);
             mew::destroy_buffer(device, &mut self.engine.allocator, &mut self.object_buffer);
@@ -577,6 +590,7 @@ fn recreate_resources_on_swapchain_resize(state: &mut State) {
 
     // destroy outdated resources
     mew::destroy_image(device, &mut state.engine.allocator, &mut state.draw_image);
+    mew::destroy_image(device, &mut state.engine.allocator, &mut state.depth_image);
 
     // update resources
     state.draw_image = mew::create_image(
@@ -586,6 +600,16 @@ fn recreate_resources_on_swapchain_resize(state: &mut State) {
         vk::Format::R16G16B16A16_SFLOAT,
         vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_SRC,
         vk::ImageAspectFlags::COLOR,
+        false,
+    );
+
+    state.depth_image = mew::create_image(
+        &device,
+        &mut state.engine.allocator,
+        state.engine.swapchain.extent,
+        vk::Format::D32_SFLOAT,
+        vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+        vk::ImageAspectFlags::DEPTH,
         false,
     );
 
