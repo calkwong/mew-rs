@@ -4,10 +4,7 @@ use ash::{
     Device, Entry, Instance,
     ext::debug_utils,
     khr::{surface, swapchain},
-    vk::{
-        self, DebugUtilsMessengerEXT, Queue,
-        SwapchainKHR,
-    },
+    vk::{self, DebugUtilsMessengerEXT, Queue, SwapchainKHR},
 };
 use ash_window;
 use gpu_allocator::MemoryLocation;
@@ -507,8 +504,98 @@ pub fn create_buffer(
     }
 }
 
-// pub fn destroy_buffer(device: &Device, buffer: Buffer) {
-// }
+pub fn create_buffer_with_data(
+    device: &Device,
+    queue: Queue,
+    fence: vk::Fence,
+    pool: vk::CommandPool,
+    cmd: vk::CommandBuffer,
+    allocator: &mut Allocator,
+    memory_location: gpu_allocator::MemoryLocation,
+    flags: vk::BufferUsageFlags,
+    size: u64,
+    data: &[u8],
+) -> Buffer {
+    // Create staging buffer
+    let mut staging_buffer = create_buffer(
+        device,
+        allocator,
+        MemoryLocation::CpuToGpu,
+        vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
+        size,
+    );
+    let ptr = staging_buffer.allocation.mapped_ptr().unwrap().as_ptr() as *mut u8;
+    unsafe { ptr.copy_from(data.as_ptr(), data.len()) };
+
+    // Create GPU buffer
+    let buffer_info = vk::BufferCreateInfo::default().usage(flags).size(size);
+    let buffer = unsafe { device.create_buffer(&buffer_info, None).unwrap() };
+
+    let requirements = unsafe { device.get_buffer_memory_requirements(buffer) };
+
+    let allocation = allocator
+        .allocate(&AllocationCreateDesc {
+            name: "Buffer allocation",
+            requirements,
+            location: memory_location,
+            linear: false,
+            allocation_scheme: AllocationScheme::GpuAllocatorManaged,
+        })
+        .unwrap();
+
+    unsafe {
+        device
+            .bind_buffer_memory(buffer, allocation.memory(), allocation.offset())
+            .unwrap()
+    };
+
+    // Copy
+    unsafe {
+        device.wait_for_fences(&[fence], true, u64::MAX).unwrap();
+        device.reset_fences(&[fence]).unwrap();
+    }
+
+    unsafe {
+        device
+            .reset_command_pool(pool, vk::CommandPoolResetFlags::empty())
+            .unwrap()
+    }
+    let cmd_begin_info = vk::CommandBufferBeginInfo::default();
+    unsafe { device.begin_command_buffer(cmd, &cmd_begin_info).unwrap() }
+    let copy_region = [vk::BufferCopy2::default().size(size)];
+
+    let copy_buffer_info = &vk::CopyBufferInfo2::default()
+        .src_buffer(staging_buffer.buffer)
+        .dst_buffer(buffer)
+        .regions(&copy_region);
+
+    unsafe { device.cmd_copy_buffer2(cmd, copy_buffer_info) }
+
+    unsafe { device.end_command_buffer(cmd).unwrap() }
+    let command_buffer_infos = [vk::CommandBufferSubmitInfo::default().command_buffer(cmd)];
+    let submit_info = [vk::SubmitInfo2::default().command_buffer_infos(&command_buffer_infos)];
+
+    unsafe { device.queue_submit2(queue, &submit_info, fence).unwrap() }
+
+    unsafe { device.device_wait_idle().unwrap() }
+
+    destroy_buffer(device, allocator, &mut staging_buffer);
+
+    Buffer {
+        buffer,
+        address: get_buffer_address(device, buffer),
+        allocation,
+        size,
+    }
+}
+
+pub fn destroy_buffer(device: &Device, allocator: &mut Allocator, buffer: &mut Buffer) {
+    unsafe {
+        let allocation = std::mem::take(&mut buffer.allocation);
+        allocator.free(allocation).unwrap();
+        device.destroy_buffer(buffer.buffer, None);
+    }
+}
 
 pub fn create_image(
     device: &Device,

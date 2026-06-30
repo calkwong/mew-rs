@@ -24,6 +24,7 @@ struct State {
     descriptor_set: vk::DescriptorSet,
     descriptor_pool: vk::DescriptorPool,
     descriptor_set_layout: vk::DescriptorSetLayout,
+    vertex_buffer: mew::Buffer,
 }
 
 impl State {
@@ -71,7 +72,7 @@ impl State {
 
         let fence_info = vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
 
-        let fences = unsafe {
+        let fences: Vec<vk::Fence> = unsafe {
             (0..FRAMES_IN_FLIGHT)
                 .map(|_| device.create_fence(&fence_info, None).unwrap())
                 .collect()
@@ -161,6 +162,23 @@ impl State {
             device.destroy_shader_module(copy_shader_module, None);
         }
 
+        let gltf_path = std::env::args().nth(1).unwrap();
+        let scene = mew::loader::load_gltf(&gltf_path);
+        let vertices = unsafe { std::slice::from_raw_parts(scene.vertices.as_ptr() as *const u8, scene.vertices.len()) };
+
+        let vertex_buffer = mew::create_buffer_with_data(
+            device,
+            engine.graphics_queue,
+            fences[0],
+            command_pools[0],
+            command_buffers[0],
+            &mut engine.allocator,
+            gpu_allocator::MemoryLocation::GpuOnly,
+            vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS | vk::BufferUsageFlags::TRANSFER_DST,
+            (scene.vertices.len() * std::mem::size_of_val(&scene.vertices[0])) as u64,
+            vertices,
+        );
+
         let this = Self {
             window: window.unwrap(),
             engine,
@@ -177,6 +195,7 @@ impl State {
             descriptor_set,
             descriptor_pool,
             descriptor_set_layout,
+            vertex_buffer,
         };
 
         this
@@ -207,6 +226,7 @@ impl Drop for State {
             // clean up allocator + resources
             // TODO: consider drop or ManuallyDrop image?
             mew::destroy_image(device, &mut self.engine.allocator, &mut self.draw_image);
+            mew::destroy_buffer(device, &mut self.engine.allocator, &mut self.vertex_buffer);
 
             device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
             device.destroy_descriptor_pool(self.descriptor_pool, None);
@@ -532,7 +552,7 @@ fn recreate_resources_on_swapchain_resize(state: &mut State) {
         vk::Format::R16G16B16A16_SFLOAT,
         vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_SRC,
         vk::ImageAspectFlags::COLOR,
-        false
+        false,
     );
 
     // update descriptor info
@@ -566,10 +586,6 @@ fn main() {
     // unsafe {
     //     std::env::remove_var("WAYLAND_DISPLAY");
     // }
-
-    let gltf_path = std::env::args().nth(1).unwrap();
-    let _scene = mew::loader::load_gltf(&gltf_path);
-
     let event_loop = EventLoop::new().unwrap();
 
     event_loop.set_control_flow(ControlFlow::Poll);

@@ -4,10 +4,10 @@ type float3 = glam::Vec3;
 type mat4x4 = glam::Mat4;
 
 pub struct Scene {
-    vertices: Vec<Vertex>,
-    indices: Vec<u32>,
-    nodes: Vec<Node>,
-    node_transforms: Vec<NodeTransform>,
+    pub vertices: Vec<Vertex>,
+    pub indices: Vec<u32>,
+    pub nodes: Vec<Node>,
+    pub node_transforms: Vec<NodeTransform>,
 }
 
 pub struct Node {
