@@ -1,5 +1,6 @@
 rule slang
-    command = slangc $in -o $out -target spirv -matrix-layout-column-major -fvk-use-entrypoint-name -Wno-39001
+    command = slangc $in -o $out -target spirv -matrix-layout-column-major -fvk-use-entrypoint-name -fvk-use-scalar-layout -Wno-39001 -I "shaders/compiled/" -I "shaders/modules/"
 
 build shaders/compiled/color.spv: slang shaders/color.slang
 build shaders/compiled/copy_swapchain.spv: slang shaders/copy_swapchain.slang
+build shaders/compiled/mesh.spv: slang shaders/mesh.slang

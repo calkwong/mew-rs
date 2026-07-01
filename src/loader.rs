@@ -40,6 +40,7 @@ pub struct Mesh {
 
 pub struct Vertex {
     pos: float3,
+    padding: f32,
     normal: float3,
 }
 
@@ -221,7 +222,7 @@ pub fn load_gltf(path: &str) -> Scene {
 
     // May need to move into loop above
     let iter = std::iter::zip(positions, normals);
-    let vertices: Vec<Vertex> = iter.map(|(pos, normal)| Vertex { pos, normal }).collect();
+    let vertices: Vec<Vertex> = iter.map(|(pos, normal)| Vertex { pos, padding: 0.0, normal }).collect();
 
     // Build nodes
     let mut nodes: Vec<Node> = Vec::new();

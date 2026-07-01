@@ -203,20 +203,25 @@ impl Engine {
         assert!(enabled_vulkan_1_2_features.descriptor_binding_variable_descriptor_count > 0);
         assert!(enabled_vulkan_1_2_features.runtime_descriptor_array > 0);
         assert!(enabled_vulkan_1_3_features.synchronization2 > 0);
+        assert!(enabled_vulkan_1_3_features.dynamic_rendering > 0);
 
         let vulkan_1_0_features = vk::PhysicalDeviceFeatures::default();
+        let mut vulkan_1_1_features =
+            vk::PhysicalDeviceVulkan11Features::default().shader_draw_parameters(true);
         let mut vulkan_1_2_features = vk::PhysicalDeviceVulkan12Features::default()
             .buffer_device_address(true)
             .descriptor_binding_partially_bound(true)
             .descriptor_binding_variable_descriptor_count(true)
             .runtime_descriptor_array(true);
-        let mut vulkan_1_3_features =
-            vk::PhysicalDeviceVulkan13Features::default().synchronization2(true);
+        let mut vulkan_1_3_features = vk::PhysicalDeviceVulkan13Features::default()
+            .synchronization2(true)
+            .dynamic_rendering(true);
 
         let device_create_info = vk::DeviceCreateInfo::default()
             .queue_create_infos(&queue_infos)
             .enabled_extension_names(&device_extension_names_raw)
             .enabled_features(&vulkan_1_0_features)
+            .push_next(&mut vulkan_1_1_features)
             .push_next(&mut vulkan_1_2_features)
             .push_next(&mut vulkan_1_3_features);
 
@@ -491,6 +496,12 @@ pub fn create_graphics_pipeline(
         .cull_mode(vk::CullModeFlags::BACK)
         .line_width(1.0);
 
+    let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::default();
+
+    let viewport_state = vk::PipelineViewportStateCreateInfo::default()
+        .scissor_count(1)
+        .viewport_count(1);
+
     let pipeline_info = vk::GraphicsPipelineCreateInfo::default()
         .color_blend_state(&color_blend_state)
         .depth_stencil_state(&depth_stencil_state)
@@ -500,6 +511,8 @@ pub fn create_graphics_pipeline(
         .multisample_state(&multisample_state)
         .rasterization_state(&rasterization_state)
         .stages(&shader_stage_info)
+        .vertex_input_state(&vertex_input_state)
+        .viewport_state(&viewport_state)
         .push_next(&mut create_flags_info);
 
     let pipelines = unsafe {

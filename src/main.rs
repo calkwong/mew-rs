@@ -21,6 +21,7 @@ struct State {
     frame_index: usize,
     color_pipeline: vk::Pipeline,
     copy_pipeline: vk::Pipeline,
+    draw_pipeline: vk::Pipeline,
     pipeline_layout: vk::PipelineLayout,
     descriptor_set: vk::DescriptorSet,
     descriptor_pool: vk::DescriptorPool,
@@ -164,15 +165,19 @@ impl State {
         // taken from ash
         let color_shader_module = mew::load_shader(device, "shaders/compiled/color.spv");
         let copy_shader_module = mew::load_shader(device, "shaders/compiled/copy_swapchain.spv");
+        let draw_shader_module = mew::load_shader(device, "shaders/compiled/mesh.spv");
 
         let color_pipeline =
             mew::create_compute_pipeline(&device, pipeline_layout, color_shader_module);
         let copy_pipeline =
             mew::create_compute_pipeline(&device, pipeline_layout, copy_shader_module);
+        let draw_pipeline =
+            mew::create_graphics_pipeline(&device, pipeline_layout, draw_shader_module, vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT, draw_image.format);
 
         unsafe {
             device.destroy_shader_module(color_shader_module, None);
             device.destroy_shader_module(copy_shader_module, None);
+            device.destroy_shader_module(draw_shader_module, None);
         }
 
         let gltf_path = std::env::args().nth(1).unwrap();
@@ -233,6 +238,7 @@ impl State {
             frame_index: 0,
             color_pipeline,
             copy_pipeline,
+            draw_pipeline,
             pipeline_layout,
             descriptor_set,
             descriptor_pool,
@@ -280,6 +286,7 @@ impl Drop for State {
             device.destroy_pipeline_layout(self.pipeline_layout, None);
             device.destroy_pipeline(self.color_pipeline, None);
             device.destroy_pipeline(self.copy_pipeline, None);
+            device.destroy_pipeline(self.draw_pipeline, None);
         }
     }
 }
