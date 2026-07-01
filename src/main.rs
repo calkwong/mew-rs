@@ -191,8 +191,6 @@ impl State {
         let gltf_path = std::env::args().nth(1).unwrap();
         let scene = mew::loader::load_gltf(&gltf_path);
 
-        dbg!(scene.renderables.len());
-
         let vertex_size = scene.vertices.len() * std::mem::size_of::<mew::loader::Vertex>();
         let vertices = unsafe {
             std::slice::from_raw_parts(scene.vertices.as_ptr() as *const u8, vertex_size)
@@ -274,15 +272,6 @@ impl State {
             objects,
         );
 
-        #[allow(dead_code)]
-        struct DrawIndirect {
-            index_count: u32,
-            instance_count: u32,
-            first_index: u32,
-            vertex_offset: i32,
-            first_instance: u32,
-        }
-
         // TODO: fix scalar block layout bug
         let draw_indirect_buffer = mew::create_buffer(
             device,
@@ -291,8 +280,7 @@ impl State {
             vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
                 | vk::BufferUsageFlags::STORAGE_BUFFER
                 | vk::BufferUsageFlags::INDIRECT_BUFFER,
-            // (scene.renderables.len() * dbg!(std::mem::size_of::<DrawIndirect>())) as u64,
-            64,
+            (scene.renderables.len() * std::mem::size_of::<vk::DrawIndexedIndirectCommand>()) as u64,
         );
 
         draw_indirect_buffer.size;
@@ -698,8 +686,7 @@ fn render_loop(state: &mut State) {
             state.draw_indirect_buffer.buffer,
             0,
             renderables_count as u32,
-            // std::mem::size_of::<vk::DrawIndexedIndirectCommand>() as u32,
-            20,
+            std::mem::size_of::<vk::DrawIndexedIndirectCommand>() as u32,
         );
 
         device.cmd_end_rendering(cmd);

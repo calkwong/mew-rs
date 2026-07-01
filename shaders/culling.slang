@@ -3,7 +3,7 @@ import types;
 struct PushConstants {
   Mesh *mesh_buffer;
   ObjectData *object_buffer;
-  DrawIndirect *draw_indirect_buffer;
+  DrawIndirect* draw_indirect_buffer;
   uint count;
 }
 
@@ -23,12 +23,9 @@ void main(uint3 global_id: SV_DispatchThreadID) {
 
   Mesh mesh = pc.mesh_buffer[mesh_id];
 
-  DrawIndirect draw;
-  draw.index_count = mesh.index_count;
-  draw.instance_count = 1;
-  draw.first_index = mesh.first_index;
-  draw.vertex_offset = mesh.vertex_offset;
-  draw.first_instance = index;
-
-  pc.draw_indirect_buffer[index] = draw;
+  pc.draw_indirect_buffer[index].index_count = mesh.index_count;
+  pc.draw_indirect_buffer[index].instance_count = 1;
+  pc.draw_indirect_buffer[index].first_index = mesh.first_index;
+  pc.draw_indirect_buffer[index].vertex_offset = mesh.vertex_offset;
+  pc.draw_indirect_buffer[index].first_instance = index;
 }

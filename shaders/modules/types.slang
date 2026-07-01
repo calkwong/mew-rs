@@ -3,6 +3,7 @@ module types;
 public struct ObjectData {
   public float4x4 world_transform;
   public uint mesh_id;
+  uint padding[3];
 }
 
 public struct Mesh {
@@ -25,5 +26,4 @@ public struct DrawIndirect {
   public uint first_index;
   public int vertex_offset;
   public uint first_instance;
-  uint padding[3];
 }
