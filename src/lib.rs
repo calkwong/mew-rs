@@ -17,6 +17,7 @@ use winit::{
 
 pub mod descriptors;
 pub mod loader;
+pub mod camera;
 
 pub struct Swapchain {
     pub loader: swapchain::Device,

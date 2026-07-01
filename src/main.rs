@@ -1,18 +1,18 @@
 use ash::vk::{self, Fence, Semaphore};
+use mew::camera::Camera;
 use winit::{
     application::ApplicationHandler,
-    event::WindowEvent,
+    event::{ElementState, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    keyboard::{KeyCode, PhysicalKey::Code},
     window::{Window, WindowId},
 };
-
-#[allow(non_camel_case_types)]
-type float3 = glam::Vec3;
 
 const FRAMES_IN_FLIGHT: usize = 1;
 
 struct State {
     window: Window,
+    camera: Camera,
     engine: mew::Engine,
     draw_image: mew::Image,
     depth_image: mew::Image,
@@ -37,6 +37,7 @@ struct State {
 impl State {
     fn new(window: Option<Window>) -> Self {
         let mut engine = mew::Engine::new(window.as_ref());
+        let camera = Camera::default().position(glam::Vec3::new(0.0, 0.0, 5.0));
 
         let device = &engine.device;
 
@@ -381,6 +382,7 @@ impl State {
 
         let this = Self {
             window: window.unwrap(),
+            camera,
             engine,
             draw_image,
             depth_image,
@@ -506,6 +508,8 @@ impl ApplicationHandler for App {
             }
             winit::event::WindowEvent::RedrawRequested => {
                 if let Some(state) = self.state.as_mut() {
+                    // TODO: verify no single frame delay
+                    state.camera.update();
                     render_loop(state);
 
                     if state.engine.swapchain.dirty {
@@ -529,14 +533,28 @@ impl ApplicationHandler for App {
             winit::event::WindowEvent::KeyboardInput {
                 event:
                     winit::event::KeyEvent {
-                        physical_key:
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Escape),
-                        state: winit::event::ElementState::Pressed,
+                        physical_key: Code(code),
+                        state: element_state,
                         ..
                     },
                 ..
             } => {
-                event_loop.exit();
+                let camera = &mut self.state.as_mut().unwrap().camera;
+                match (code, element_state) {
+                    (KeyCode::Escape, ElementState::Pressed) => {
+                        event_loop.exit();
+                    }
+                    // TODO: broken
+                    (KeyCode::KeyW, ElementState::Pressed) => camera.process_input(0.0, 1.0),
+                    (KeyCode::KeyS, ElementState::Pressed) => camera.process_input(0.0, -1.0),
+                    (KeyCode::KeyA, ElementState::Pressed) => camera.process_input(1.0, 0.0),
+                    (KeyCode::KeyD, ElementState::Pressed) => camera.process_input(-1.0, 0.0),
+                    (KeyCode::KeyW, ElementState::Released) => camera.process_input(0.0, -1.0),
+                    (KeyCode::KeyS, ElementState::Released) => camera.process_input(0.0, 1.0),
+                    (KeyCode::KeyA, ElementState::Released) => camera.process_input(-1.0, 0.0),
+                    (KeyCode::KeyD, ElementState::Released) => camera.process_input(1.0, 0.0),
+                    _ => {}
+                }
             }
             _ => {}
         }
@@ -561,16 +579,13 @@ fn render_loop(state: &mut State) {
     let device = &state.engine.device;
     let current_index = state.frame_index % FRAMES_IN_FLIGHT;
 
-    // TODO: with proper camera, flip sign of z
-    let camera_pos = float3::new(0.0, 0.0, -5.0);
-    let camera_near = 0.01;
-    let fovy = (state.engine.swapchain.extent.width as f32)
+    let aspect = (state.engine.swapchain.extent.width as f32)
         / (state.engine.swapchain.extent.height as f32);
-    let view = glam::Mat4::from_translation(camera_pos);
+    let view = state.camera.get_view_matrix();
     let proj = mew::get_infinite_reverse_perspective_matrix(
-        70.0_f32.to_radians(),
-        fovy as f32,
-        camera_near,
+        state.camera.fovy,
+        aspect as f32,
+        state.camera.near,
     );
     let view_proj = proj * view;
 
@@ -894,6 +909,7 @@ fn render_loop(state: &mut State) {
     };
 
     state.frame_index += 1;
+    dbg!(state.frame_index);
 }
 
 // This is project specific
@@ -955,9 +971,9 @@ fn recreate_resources_on_swapchain_resize(state: &mut State) {
 }
 
 fn main() {
-    unsafe {
-        std::env::remove_var("WAYLAND_DISPLAY");
-    }
+    // unsafe {
+    //     std::env::remove_var("WAYLAND_DISPLAY");
+    // }
 
     let event_loop = EventLoop::new().unwrap();
 
