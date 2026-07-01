@@ -54,6 +54,7 @@ pub struct Engine {
     pub graphics_queue: Queue,
     pub allocator: ManuallyDrop<Allocator>,
     pub swapchain: Swapchain,
+    pub deletion_stack: DeletionStack,
     pub debug_utils_loader: debug_utils::Instance,
     pub debug_callback: DebugUtilsMessengerEXT,
     pub properties: vk::PhysicalDeviceProperties,
@@ -358,6 +359,9 @@ impl Engine {
                 views: swapchain_image_views,
                 dirty: false,
             },
+            deletion_stack: DeletionStack {
+                stack: Vec::new(),
+            },
             debug_utils_loader,
             debug_callback,
             properties: properties.properties,
@@ -368,6 +372,8 @@ impl Engine {
 impl Drop for Engine {
     fn drop(&mut self) {
         unsafe {
+            self.deletion_stack.flush();
+
             let swapchain = &self.swapchain;
 
             swapchain
@@ -386,6 +392,22 @@ impl Drop for Engine {
             self.debug_utils_loader
                 .destroy_debug_utils_messenger(self.debug_callback, None);
             self.instance.destroy_instance(None);
+        }
+    }
+}
+
+pub struct DeletionStack {
+    stack: Vec<Box<dyn Fn()>>,
+}
+
+impl DeletionStack {
+    pub fn push<F: Fn() + 'static>(&mut self, f: F) {
+        self.stack.push(Box::new(f));
+    }
+
+    pub fn flush(&mut self) {
+        while let Some(f) = self.stack.pop() {
+            f();
         }
     }
 }
@@ -788,6 +810,7 @@ pub fn create_image_view(
     unsafe { device.create_image_view(&info, None).unwrap() }
 }
 
+// Taken from ash
 pub fn load_shader(device: &Device, path: &str) -> vk::ShaderModule {
     let mut file = std::fs::File::open(path).expect("Could not read / open file");
 

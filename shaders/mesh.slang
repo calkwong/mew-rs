@@ -1,7 +1,7 @@
 import types;
 
 // TODO: move to a module
-[vk::binding(0, 0)]
+[vk::binding(0, 1)]
 __DynamicResource<__DynamicResourceKind.General> storage_images[];
 
 public T get_storage_image<T>(uint handle)
@@ -24,7 +24,6 @@ struct PushConstants {
 [[vk::push_constant]]
 PushConstants pc;
 
-// TODO: some system values may req Vulkan ver
 [shader("vertex")]
 Interp vs_main(uint instance_id: SV_VulkanInstanceID,
                uint vertex_id: SV_VulkanVertexID) {

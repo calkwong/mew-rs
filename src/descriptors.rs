@@ -2,11 +2,10 @@ use ash::{vk, Device};
 
 pub fn create_descriptor_pool(
     device: &Device,
-    pool_size: vk::DescriptorPoolSize,
+    pool_size: &[vk::DescriptorPoolSize],
 ) -> vk::DescriptorPool {
-    let pool_size = [pool_size];
     let descriptor_pool_info = vk::DescriptorPoolCreateInfo::default()
-        .max_sets(1)
+        .max_sets(4)
         .pool_sizes(&pool_size);
 
     unsafe {
@@ -19,13 +18,12 @@ pub fn create_descriptor_pool(
 pub fn create_descriptor_layouts(
     device: &Device,
     binding: vk::DescriptorSetLayoutBinding,
+    binding_flags: &[vk::DescriptorBindingFlags],
 ) -> vk::DescriptorSetLayout {
     let binding = [binding];
 
-    let binding_flags = [vk::DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT
-        | vk::DescriptorBindingFlags::PARTIALLY_BOUND];
     let mut binding_flags_info =
-        vk::DescriptorSetLayoutBindingFlagsCreateInfo::default().binding_flags(&binding_flags);
+        vk::DescriptorSetLayoutBindingFlagsCreateInfo::default().binding_flags(binding_flags);
 
     let layout_info = vk::DescriptorSetLayoutCreateInfo::default()
         .push_next(&mut binding_flags_info)

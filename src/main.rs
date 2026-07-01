@@ -26,9 +26,7 @@ struct State {
     draw_pipeline: vk::Pipeline,
     cull_pipeline: vk::Pipeline,
     pipeline_layout: vk::PipelineLayout,
-    descriptor_set: vk::DescriptorSet,
-    descriptor_pool: vk::DescriptorPool,
-    descriptor_set_layout: vk::DescriptorSetLayout,
+    descriptor_sets: [vk::DescriptorSet; 4],
     vertex_buffer: mew::Buffer,
     index_buffer: mew::Buffer,
     mesh_buffer: mew::Buffer,
@@ -110,27 +108,107 @@ impl State {
                 .collect()
         };
 
-        // init descriptors
-        let pool_size = vk::DescriptorPoolSize {
-            ty: vk::DescriptorType::STORAGE_IMAGE,
-            descriptor_count: 100,
-        };
-        let descriptor_pool = mew::descriptors::create_descriptor_pool(&device, pool_size);
-        let binding = vk::DescriptorSetLayoutBinding::default()
+        // Init descriptors
+        let pool_size = [
+            vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::UNIFORM_BUFFER,
+                descriptor_count: 3,
+            },
+            vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::STORAGE_BUFFER,
+                descriptor_count: 3,
+            },
+            vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::STORAGE_IMAGE,
+                descriptor_count: 300,
+            },
+            vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::SAMPLED_IMAGE,
+                descriptor_count: 300,
+            },
+            vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::SAMPLER,
+                descriptor_count: 5,
+            },
+        ];
+        let descriptor_pool = mew::descriptors::create_descriptor_pool(&device, &pool_size);
+        let buffer_binding = vk::DescriptorSetLayoutBinding::default()
             .binding(0)
-            .descriptor_count(10)
+            .descriptor_count(FRAMES_IN_FLIGHT as u32)
+            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+            .stage_flags(vk::ShaderStageFlags::ALL);
+
+        let storage_image_binding = vk::DescriptorSetLayoutBinding::default()
+            .binding(0)
+            .descriptor_count(300)
             .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
             .stage_flags(vk::ShaderStageFlags::ALL);
 
+        let sample_image_binding = vk::DescriptorSetLayoutBinding::default()
+            .binding(0)
+            .descriptor_count(300)
+            .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+            .stage_flags(vk::ShaderStageFlags::ALL);
+
+        let sampler_binding = vk::DescriptorSetLayoutBinding::default()
+            .binding(0)
+            .descriptor_count(5)
+            .descriptor_type(vk::DescriptorType::SAMPLER)
+            .stage_flags(vk::ShaderStageFlags::ALL);
+
         // setup for bindless descriptors
-        let descriptor_set_layout = mew::descriptors::create_descriptor_layouts(&device, binding);
-        let storage_image_descriptor_counts = engine.swapchain.images.len() as u32 + 1;
-        let descriptor_set = mew::descriptors::create_descriptor_sets(
+        let buffer_descriptor_layout =
+            mew::descriptors::create_descriptor_layouts(&device, buffer_binding, &[]);
+        let storage_descriptor_layout = mew::descriptors::create_descriptor_layouts(
+            &device,
+            storage_image_binding,
+            &[vk::DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT
+                | vk::DescriptorBindingFlags::PARTIALLY_BOUND],
+        );
+        let sample_descriptor_layout = mew::descriptors::create_descriptor_layouts(
+            &device,
+            sample_image_binding,
+            &[vk::DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT
+                | vk::DescriptorBindingFlags::PARTIALLY_BOUND],
+        );
+        let sampler_descriptor_layout = mew::descriptors::create_descriptor_layouts(
+            &device,
+            sampler_binding,
+            &[vk::DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT
+                | vk::DescriptorBindingFlags::PARTIALLY_BOUND],
+        );
+
+        let buffer_descriptor = mew::descriptors::create_descriptor_sets(
             &device,
             descriptor_pool,
-            descriptor_set_layout,
-            storage_image_descriptor_counts,
+            buffer_descriptor_layout,
+            3,
         );
+        let storage_descriptor = mew::descriptors::create_descriptor_sets(
+            &device,
+            descriptor_pool,
+            storage_descriptor_layout,
+            300,
+        );
+        let sample_descriptor = mew::descriptors::create_descriptor_sets(
+            &device,
+            descriptor_pool,
+            sample_descriptor_layout,
+            300,
+        );
+        let sampler_descriptor = mew::descriptors::create_descriptor_sets(
+            &device,
+            descriptor_pool,
+            sampler_descriptor_layout,
+            5,
+        );
+
+        let descriptor_sets = [
+            buffer_descriptor,
+            storage_descriptor,
+            sample_descriptor,
+            sampler_descriptor,
+        ];
 
         // TODO: create fn for write desc set
         let mut image_infos: Vec<vk::DescriptorImageInfo> =
@@ -144,17 +222,25 @@ impl State {
                     .image_view(*image_view),
             );
         });
+
+        // Write to descriptors
         let storage_descriptor_write = vk::WriteDescriptorSet::default()
-            .dst_set(descriptor_set)
+            .dst_set(storage_descriptor)
             .dst_binding(0)
             .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
             .image_info(&image_infos)
-            .descriptor_count(storage_image_descriptor_counts);
+            .descriptor_count(4);
         unsafe {
             device.update_descriptor_sets(&[storage_descriptor_write], &[]);
         }
 
-        let descriptor_set_layouts = [descriptor_set_layout];
+        let descriptor_set_layouts = [
+            buffer_descriptor_layout,
+            storage_descriptor_layout,
+            sample_descriptor_layout,
+            sampler_descriptor_layout,
+        ];
+
         let push_constant_range = [vk::PushConstantRange::default()
             .stage_flags(vk::ShaderStageFlags::ALL)
             .size(engine.properties.limits.max_push_constants_size)];
@@ -167,7 +253,19 @@ impl State {
                 .unwrap()
         };
 
-        // taken from ash
+        // Clones device and moves handles no longer needed to deletion stack
+        // These handles are no longer valid in this scope after move
+        for layout in descriptor_set_layouts {
+            let device_clone = device.clone();
+            engine.deletion_stack.push(move || unsafe {
+                device_clone.destroy_descriptor_set_layout(layout, None);
+            });
+        }
+        let device_clone = device.clone();
+        engine.deletion_stack.push(move || unsafe {
+            device_clone.destroy_descriptor_pool(descriptor_pool, None);
+        });
+
         let copy_shader = mew::load_shader(device, "shaders/compiled/copy_swapchain.spv");
         let draw_shader = mew::load_shader(device, "shaders/compiled/mesh.spv");
         let cull_shader = mew::load_shader(device, "shaders/compiled/culling.spv");
@@ -232,9 +330,8 @@ impl State {
         );
 
         let meshes_size = scene.meshes.len() * std::mem::size_of::<mew::loader::Mesh>();
-        let meshes = unsafe {
-            std::slice::from_raw_parts(scene.meshes.as_ptr() as *const u8, meshes_size)
-        };
+        let meshes =
+            unsafe { std::slice::from_raw_parts(scene.meshes.as_ptr() as *const u8, meshes_size) };
         let mesh_buffer = mew::create_buffer_with_data(
             device,
             engine.graphics_queue,
@@ -252,10 +349,7 @@ impl State {
 
         let object_size = scene.renderables.len() * std::mem::size_of::<mew::loader::ObjectData>();
         let objects = unsafe {
-            std::slice::from_raw_parts(
-                scene.renderables.as_ptr() as *const u8,
-                object_size,
-            )
+            std::slice::from_raw_parts(scene.renderables.as_ptr() as *const u8, object_size)
         };
         let object_buffer = mew::create_buffer_with_data(
             device,
@@ -272,7 +366,6 @@ impl State {
             objects,
         );
 
-        // TODO: fix scalar block layout bug
         let draw_indirect_buffer = mew::create_buffer(
             device,
             &mut engine.allocator,
@@ -280,7 +373,8 @@ impl State {
             vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
                 | vk::BufferUsageFlags::STORAGE_BUFFER
                 | vk::BufferUsageFlags::INDIRECT_BUFFER,
-            (scene.renderables.len() * std::mem::size_of::<vk::DrawIndexedIndirectCommand>()) as u64,
+            (scene.renderables.len() * std::mem::size_of::<vk::DrawIndexedIndirectCommand>())
+                as u64,
         );
 
         draw_indirect_buffer.size;
@@ -300,9 +394,7 @@ impl State {
             draw_pipeline,
             cull_pipeline,
             pipeline_layout,
-            descriptor_set,
-            descriptor_pool,
-            descriptor_set_layout,
+            descriptor_sets,
             vertex_buffer,
             index_buffer,
             mesh_buffer,
@@ -349,8 +441,6 @@ impl Drop for State {
                 &mut self.draw_indirect_buffer,
             );
 
-            device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
-            device.destroy_descriptor_pool(self.descriptor_pool, None);
             device.destroy_pipeline_layout(self.pipeline_layout, None);
             device.destroy_pipeline(self.copy_pipeline, None);
             device.destroy_pipeline(self.draw_pipeline, None);
@@ -474,7 +564,8 @@ fn render_loop(state: &mut State) {
     // TODO: with proper camera, flip sign of z
     let camera_pos = float3::new(0.0, 0.0, -5.0);
     let camera_near = 0.01;
-    let fovy = (state.engine.swapchain.extent.width as f32) / (state.engine.swapchain.extent.height as f32);
+    let fovy = (state.engine.swapchain.extent.width as f32)
+        / (state.engine.swapchain.extent.height as f32);
     let view = glam::Mat4::from_translation(camera_pos);
     let proj = mew::get_infinite_reverse_perspective_matrix(
         70.0_f32.to_radians(),
@@ -502,14 +593,28 @@ fn render_loop(state: &mut State) {
     unsafe { device.begin_command_buffer(cmd, &cmd_begin_info).unwrap() };
 
     unsafe {
-        device.cmd_bind_descriptor_sets(
-            cmd,
-            vk::PipelineBindPoint::COMPUTE,
-            state.pipeline_layout,
-            0,
-            &[state.descriptor_set],
-            &[],
-        );
+        state
+            .descriptor_sets
+            .iter()
+            .enumerate()
+            .for_each(|(index, descriptor)| {
+                device.cmd_bind_descriptor_sets(
+                    cmd,
+                    vk::PipelineBindPoint::COMPUTE,
+                    state.pipeline_layout,
+                    index as u32,
+                    &[*descriptor],
+                    &[],
+                );
+                device.cmd_bind_descriptor_sets(
+                    cmd,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    state.pipeline_layout,
+                    index as u32,
+                    &[*descriptor],
+                    &[],
+                );
+            });
     }
 
     let acquire_semaphore = state.image_acquired_semaphores[current_index];
@@ -839,7 +944,7 @@ fn recreate_resources_on_swapchain_resize(state: &mut State) {
 
     // update descriptors
     let storage_descriptor_write = vk::WriteDescriptorSet::default()
-        .dst_set(state.descriptor_set)
+        .dst_set(state.descriptor_sets[1])
         .dst_binding(0)
         .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
         .image_info(&image_infos)

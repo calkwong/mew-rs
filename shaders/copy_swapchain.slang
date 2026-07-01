@@ -1,5 +1,5 @@
 // TODO: move to a module
-[vk::binding(0, 0)]
+[vk::binding(0, 1)]
 __DynamicResource<__DynamicResourceKind.General> storage_images[];
 
 public T get_storage_image<T>(uint handle)
