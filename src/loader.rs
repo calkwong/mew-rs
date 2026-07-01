@@ -13,11 +13,12 @@ pub struct Scene {
 
 pub struct ObjectData {
     world_transform: mat4x4,
+    mesh_id: u32,
 }
 
 pub struct Node {
     mesh: MeshAsset,
-    children: Vec<usize>,
+    children: Vec<usize>, // child nodes
 }
 
 pub struct NodeTransform {
@@ -27,7 +28,7 @@ pub struct NodeTransform {
 
 #[derive(Copy, Clone)]
 pub struct MeshAsset {
-    mesh: u32,
+    mesh_id: u32,
     count: u32,
 }
 
@@ -187,7 +188,7 @@ pub fn load_gltf(path: &str) -> Scene {
     // We need a threadsafe container for parallel loading?
     for m in &gltf.meshes {
         let mesh: MeshAsset = MeshAsset {
-            mesh: meshes.len() as u32,
+            mesh_id: meshes.len() as u32,
             count: m.primitives.len() as u32,
         };
 
@@ -274,12 +275,18 @@ pub fn load_gltf(path: &str) -> Scene {
         refresh_transform(&nodes, &mut node_transforms, *child_index, mat4x4::IDENTITY);
     }
 
-    let renderables: Vec<ObjectData> = node_transforms
-        .iter()
-        .map(|transform| ObjectData {
-            world_transform: transform.world_transform,
-        })
-        .collect();
+    let mut renderables: Vec<ObjectData> = Vec::new();
+
+    nodes.iter().enumerate().for_each(|(index, node)| {
+        (0..node.mesh.count).for_each(|i| {
+            renderables.push(ObjectData {
+                world_transform: node_transforms[index as usize].world_transform,
+                mesh_id: node.mesh.mesh_id + i,
+            })
+        });
+    });
+
+    dbg!(renderables.len());
 
     Scene {
         vertices,

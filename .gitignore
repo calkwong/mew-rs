@@ -2,3 +2,4 @@
 .ninja_log
 *.spv
 /assets
+.zed
