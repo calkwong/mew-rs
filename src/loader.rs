@@ -66,9 +66,6 @@ fn get_indices(
     assert_eq!(byte_size, 2);
     let byte_stride = buffer_view.byte_stride.unwrap_or(byte_size);
 
-    // For global combined index buffer
-    let index_offset = out_buffer.len() as u32;
-
     out_buffer.extend((0..count).map(|i| {
         let vertex_offset = start + i * byte_stride;
 
@@ -78,7 +75,7 @@ fn get_indices(
                 .unwrap(),
         ) as u32;
 
-        index + index_offset
+        index
     }));
 
     count as u32
