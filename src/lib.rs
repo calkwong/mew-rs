@@ -448,20 +448,23 @@ pub fn create_graphics_pipeline(
     device: &Device,
     layout: vk::PipelineLayout,
     module: vk::ShaderModule,
-    // TODO:
-    _shader_stages: vk::ShaderStageFlags,
+    shader_stages: &[vk::ShaderStageFlags],
     format: vk::Format,
 ) -> vk::Pipeline {
-    let shader_stage_info = [
-        vk::PipelineShaderStageCreateInfo::default()
-            .name(c"vs_main")
-            .module(module)
-            .stage(vk::ShaderStageFlags::VERTEX),
-        vk::PipelineShaderStageCreateInfo::default()
-            .name(c"ps_main")
-            .module(module)
-            .stage(vk::ShaderStageFlags::FRAGMENT),
-    ];
+
+    let shader_stage_info: Vec<vk::PipelineShaderStageCreateInfo> = shader_stages.iter().map(|stage|{
+        match *stage {
+            vk::ShaderStageFlags::VERTEX => vk::PipelineShaderStageCreateInfo::default()
+                .name(c"vs_main")
+                .module(module)
+                .stage(vk::ShaderStageFlags::VERTEX),
+            vk::ShaderStageFlags::FRAGMENT => vk::PipelineShaderStageCreateInfo::default()
+                .name(c"ps_main")
+                .module(module)
+                .stage(vk::ShaderStageFlags::FRAGMENT),
+            _ => panic!("Unsupported shader stage"),
+        }
+    }).collect();
 
     let formats = [format];
     let mut rendering_create_info = vk::PipelineRenderingCreateInfo::default()

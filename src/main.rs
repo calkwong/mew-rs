@@ -178,7 +178,7 @@ impl State {
             &device,
             pipeline_layout,
             draw_shader,
-            vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+            &[vk::ShaderStageFlags::VERTEX, vk::ShaderStageFlags::FRAGMENT],
             draw_image.format,
         );
 
