@@ -15,6 +15,7 @@ struct Interp {
 }
 
 struct PushConstants {
+  float4x4 view_proj;
   Vertex *vertex_buffer;
   Mesh *mesh_buffer;
   ObjectData *object_buffer;
@@ -25,13 +26,15 @@ PushConstants pc;
 
 // TODO: some system values may req Vulkan ver
 [shader("vertex")]
-Interp vs_main(uint vertex_id: SV_VertexID,
-               uint base_vertex: SV_StartVertexLocation) {
+Interp vs_main(uint instance_id: SV_VulkanInstanceID,
+               uint vertex_id: SV_VulkanVertexID) {
   Interp interp;
 
   Vertex vertex = pc.vertex_buffer[vertex_id];
-  // TODO: mvp
-  interp.position = mul(float4x4(1.0), float4(vertex.pos, 1.0));
+  ObjectData o = pc.object_buffer[instance_id];
+
+  float4 world_pos = mul(o.world_transform, float4(vertex.pos, 1.0));
+  interp.position = mul(pc.view_proj, world_pos);
   interp.normal = vertex.normal;
 
   return interp;

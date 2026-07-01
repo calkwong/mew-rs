@@ -6,6 +6,9 @@ use winit::{
     window::{Window, WindowId},
 };
 
+#[allow(non_camel_case_types)]
+type float3 = glam::Vec3;
+
 const FRAMES_IN_FLIGHT: usize = 1;
 
 struct State {
@@ -19,16 +22,18 @@ struct State {
     render_done_semaphores: Vec<Semaphore>,
     image_acquired_semaphores: Vec<Semaphore>,
     frame_index: usize,
-    color_pipeline: vk::Pipeline,
     copy_pipeline: vk::Pipeline,
     draw_pipeline: vk::Pipeline,
+    cull_pipeline: vk::Pipeline,
     pipeline_layout: vk::PipelineLayout,
     descriptor_set: vk::DescriptorSet,
     descriptor_pool: vk::DescriptorPool,
     descriptor_set_layout: vk::DescriptorSetLayout,
     vertex_buffer: mew::Buffer,
     index_buffer: mew::Buffer,
+    mesh_buffer: mew::Buffer,
     object_buffer: mew::Buffer,
+    draw_indirect_buffer: mew::Buffer,
 }
 
 impl State {
@@ -163,27 +168,36 @@ impl State {
         };
 
         // taken from ash
-        let color_shader_module = mew::load_shader(device, "shaders/compiled/color.spv");
-        let copy_shader_module = mew::load_shader(device, "shaders/compiled/copy_swapchain.spv");
-        let draw_shader_module = mew::load_shader(device, "shaders/compiled/mesh.spv");
+        let copy_shader = mew::load_shader(device, "shaders/compiled/copy_swapchain.spv");
+        let draw_shader = mew::load_shader(device, "shaders/compiled/mesh.spv");
+        let cull_shader = mew::load_shader(device, "shaders/compiled/culling.spv");
 
-        let color_pipeline =
-            mew::create_compute_pipeline(&device, pipeline_layout, color_shader_module);
-        let copy_pipeline =
-            mew::create_compute_pipeline(&device, pipeline_layout, copy_shader_module);
-        let draw_pipeline =
-            mew::create_graphics_pipeline(&device, pipeline_layout, draw_shader_module, vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT, draw_image.format);
+        let cull_pipeline = mew::create_compute_pipeline(&device, pipeline_layout, cull_shader);
+        let copy_pipeline = mew::create_compute_pipeline(&device, pipeline_layout, copy_shader);
+        let draw_pipeline = mew::create_graphics_pipeline(
+            &device,
+            pipeline_layout,
+            draw_shader,
+            vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+            draw_image.format,
+        );
 
         unsafe {
-            device.destroy_shader_module(color_shader_module, None);
-            device.destroy_shader_module(copy_shader_module, None);
-            device.destroy_shader_module(draw_shader_module, None);
+            device.destroy_shader_module(copy_shader, None);
+            device.destroy_shader_module(draw_shader, None);
+            device.destroy_shader_module(cull_shader, None);
         }
 
         let gltf_path = std::env::args().nth(1).unwrap();
         let scene = mew::loader::load_gltf(&gltf_path);
 
-        let vertices = unsafe { std::slice::from_raw_parts(scene.vertices.as_ptr() as *const u8, scene.vertices.len()) };
+        dbg!(scene.renderables.len());
+
+        let vertex_size = scene.vertices.len() * std::mem::size_of::<mew::loader::Vertex>();
+        let vertices = unsafe {
+            std::slice::from_raw_parts(scene.vertices.as_ptr() as *const u8, vertex_size)
+        };
+
         let vertex_buffer = mew::create_buffer_with_data(
             device,
             engine.graphics_queue,
@@ -192,12 +206,17 @@ impl State {
             command_buffers[0],
             &mut engine.allocator,
             gpu_allocator::MemoryLocation::GpuOnly,
-            vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS | vk::BufferUsageFlags::TRANSFER_DST,
-            (scene.vertices.len() * std::mem::size_of_val(&scene.vertices[0])) as u64,
+            vk::BufferUsageFlags::STORAGE_BUFFER
+                | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
+                | vk::BufferUsageFlags::TRANSFER_DST,
+            vertex_size as u64,
             vertices,
         );
 
-        let indices = unsafe { std::slice::from_raw_parts(scene.indices.as_ptr() as *const u8, scene.indices.len()) };
+        let indices_size = scene.indices.len() * std::mem::size_of::<u32>();
+        let indices = unsafe {
+            std::slice::from_raw_parts(scene.indices.as_ptr() as *const u8, indices_size)
+        };
         let index_buffer = mew::create_buffer_with_data(
             device,
             engine.graphics_queue,
@@ -206,12 +225,40 @@ impl State {
             command_buffers[0],
             &mut engine.allocator,
             gpu_allocator::MemoryLocation::GpuOnly,
-            vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS | vk::BufferUsageFlags::TRANSFER_DST,
-            (scene.indices.len() * std::mem::size_of_val(&scene.indices[0])) as u64,
+            vk::BufferUsageFlags::STORAGE_BUFFER
+                | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
+                | vk::BufferUsageFlags::TRANSFER_DST
+                | vk::BufferUsageFlags::INDEX_BUFFER,
+            indices_size as u64,
             indices,
         );
 
-        let objects = unsafe { std::slice::from_raw_parts(scene.renderables.as_ptr() as *const u8, scene.renderables.len()) };
+        let meshes_size = scene.meshes.len() * std::mem::size_of::<mew::loader::Mesh>();
+        let meshes = unsafe {
+            std::slice::from_raw_parts(scene.meshes.as_ptr() as *const u8, meshes_size)
+        };
+        let mesh_buffer = mew::create_buffer_with_data(
+            device,
+            engine.graphics_queue,
+            fences[0],
+            command_pools[0],
+            command_buffers[0],
+            &mut engine.allocator,
+            gpu_allocator::MemoryLocation::GpuOnly,
+            vk::BufferUsageFlags::STORAGE_BUFFER
+                | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
+                | vk::BufferUsageFlags::TRANSFER_DST,
+            meshes_size as u64,
+            meshes,
+        );
+
+        let object_size = scene.renderables.len() * std::mem::size_of::<mew::loader::ObjectData>();
+        let objects = unsafe {
+            std::slice::from_raw_parts(
+                scene.renderables.as_ptr() as *const u8,
+                object_size,
+            )
+        };
         let object_buffer = mew::create_buffer_with_data(
             device,
             engine.graphics_queue,
@@ -220,10 +267,35 @@ impl State {
             command_buffers[0],
             &mut engine.allocator,
             gpu_allocator::MemoryLocation::GpuOnly,
-            vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS | vk::BufferUsageFlags::TRANSFER_DST,
-            (scene.renderables.len() * std::mem::size_of_val(&scene.renderables[0])) as u64,
+            vk::BufferUsageFlags::STORAGE_BUFFER
+                | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
+                | vk::BufferUsageFlags::TRANSFER_DST,
+            object_size as u64,
             objects,
         );
+
+        #[allow(dead_code)]
+        struct DrawIndirect {
+            index_count: u32,
+            instance_count: u32,
+            first_index: u32,
+            vertex_offset: i32,
+            first_instance: u32,
+        }
+
+        // TODO: fix scalar block layout bug
+        let draw_indirect_buffer = mew::create_buffer(
+            device,
+            &mut engine.allocator,
+            gpu_allocator::MemoryLocation::GpuOnly,
+            vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
+                | vk::BufferUsageFlags::STORAGE_BUFFER
+                | vk::BufferUsageFlags::INDIRECT_BUFFER,
+            // (scene.renderables.len() * dbg!(std::mem::size_of::<DrawIndirect>())) as u64,
+            64,
+        );
+
+        draw_indirect_buffer.size;
 
         let this = Self {
             window: window.unwrap(),
@@ -236,16 +308,18 @@ impl State {
             render_done_semaphores,
             image_acquired_semaphores,
             frame_index: 0,
-            color_pipeline,
             copy_pipeline,
             draw_pipeline,
+            cull_pipeline,
             pipeline_layout,
             descriptor_set,
             descriptor_pool,
             descriptor_set_layout,
             vertex_buffer,
             index_buffer,
+            mesh_buffer,
             object_buffer,
+            draw_indirect_buffer,
         };
 
         this
@@ -280,13 +354,19 @@ impl Drop for State {
             mew::destroy_buffer(device, &mut self.engine.allocator, &mut self.vertex_buffer);
             mew::destroy_buffer(device, &mut self.engine.allocator, &mut self.index_buffer);
             mew::destroy_buffer(device, &mut self.engine.allocator, &mut self.object_buffer);
+            mew::destroy_buffer(device, &mut self.engine.allocator, &mut self.mesh_buffer);
+            mew::destroy_buffer(
+                device,
+                &mut self.engine.allocator,
+                &mut self.draw_indirect_buffer,
+            );
 
             device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
             device.destroy_descriptor_pool(self.descriptor_pool, None);
             device.destroy_pipeline_layout(self.pipeline_layout, None);
-            device.destroy_pipeline(self.color_pipeline, None);
             device.destroy_pipeline(self.copy_pipeline, None);
             device.destroy_pipeline(self.draw_pipeline, None);
+            device.destroy_pipeline(self.cull_pipeline, None);
         }
     }
 }
@@ -403,6 +483,18 @@ fn render_loop(state: &mut State) {
     let device = &state.engine.device;
     let current_index = state.frame_index % FRAMES_IN_FLIGHT;
 
+    // TODO: with proper camera, flip sign of z
+    let camera_pos = float3::new(0.0, 0.0, -5.0);
+    let camera_near = 0.01;
+    let fovy = (state.engine.swapchain.extent.width as f32) / (state.engine.swapchain.extent.height as f32);
+    let view = glam::Mat4::from_translation(camera_pos);
+    let proj = mew::get_infinite_reverse_perspective_matrix(
+        70.0_f32.to_radians(),
+        fovy as f32,
+        camera_near,
+    );
+    let view_proj = proj * view;
+
     let fence = state.fences[current_index];
     unsafe {
         device.wait_for_fences(&[fence], true, u64::MAX).unwrap();
@@ -477,31 +569,145 @@ fn render_loop(state: &mut State) {
 
     let mut image_memory_barriers: Vec<vk::ImageMemoryBarrier2> = Vec::new();
     image_memory_barriers.push(image_memory_barrier);
-    // draw image
+    // draw image & depth image
     image_memory_barrier.image = state.draw_image.image;
     image_memory_barrier.new_layout = vk::ImageLayout::GENERAL;
+    image_memory_barriers.push(image_memory_barrier);
+    image_memory_barrier.image = state.depth_image.image;
+    image_memory_barrier.new_layout = vk::ImageLayout::GENERAL;
+    image_memory_barrier.subresource_range = vk::ImageSubresourceRange {
+        aspect_mask: vk::ImageAspectFlags::DEPTH,
+        base_mip_level: 0,
+        level_count: 1,
+        base_array_layer: 0,
+        layer_count: 1,
+    };
     image_memory_barriers.push(image_memory_barrier);
 
     let mut dependency_info =
         vk::DependencyInfo::default().image_memory_barriers(&image_memory_barriers);
     unsafe { device.cmd_pipeline_barrier2(cmd, &dependency_info) };
 
+    // hack
+    let renderables_count =
+        state.object_buffer.size as usize / std::mem::size_of::<mew::loader::ObjectData>();
+
+    // dumb compute shader that builds draw indirect buffer
     unsafe {
-        device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, state.color_pipeline);
+        device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, state.cull_pipeline);
 
         #[allow(dead_code)]
         struct PushConstants {
-            draw_id: u32,
+            mesh_buffer: vk::DeviceAddress,
+            object_buffer: vk::DeviceAddress,
+            draw_indirect_buffer: vk::DeviceAddress,
+            count: u32,
         }
-        let pc = PushConstants { draw_id: 0 };
+        let pc = PushConstants {
+            mesh_buffer: state.mesh_buffer.address,
+            object_buffer: state.object_buffer.address,
+            draw_indirect_buffer: state.draw_indirect_buffer.address,
+            count: renderables_count as u32,
+        };
         mew::push_constants(&device, cmd, state.pipeline_layout, &pc);
-        let group_count_x = mew::get_group_count(state.engine.swapchain.extent.width, 8);
-        let group_count_y = mew::get_group_count(state.engine.swapchain.extent.height, 8);
-        device.cmd_dispatch(cmd, group_count_x, group_count_y, 1);
+
+        let group_count_x = mew::get_group_count(renderables_count as u32, 256);
+        device.cmd_dispatch(cmd, group_count_x, 1, 1);
+    };
+
+    mew::giga_barrier(device, cmd);
+
+    // rasterize
+    unsafe {
+        device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, state.draw_pipeline);
+
+        let clear_value = vk::ClearValue {
+            color: vk::ClearColorValue {
+                float32: [0.0, 0.0, 0.0, 1.0],
+            },
+        };
+
+        let depth_clear_value = vk::ClearValue {
+            depth_stencil: vk::ClearDepthStencilValue {
+                depth: 0.0,
+                stencil: 0,
+            },
+        };
+
+        let color_attachments = [vk::RenderingAttachmentInfo::default()
+            .image_view(state.draw_image.view)
+            .image_layout(vk::ImageLayout::GENERAL)
+            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .store_op(vk::AttachmentStoreOp::STORE)
+            .clear_value(clear_value)];
+
+        let depth_attachment = vk::RenderingAttachmentInfo::default()
+            .image_view(state.depth_image.view)
+            .image_layout(vk::ImageLayout::GENERAL)
+            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .store_op(vk::AttachmentStoreOp::STORE)
+            .clear_value(depth_clear_value);
+
+        let swapchain_extent = state.engine.swapchain.extent;
+
+        let rendering_info = vk::RenderingInfo::default()
+            .render_area(vk::Rect2D {
+                extent: swapchain_extent,
+                ..Default::default()
+            })
+            .depth_attachment(&depth_attachment)
+            .color_attachments(&color_attachments)
+            .layer_count(1);
+
+        device.cmd_begin_rendering(cmd, &rendering_info);
+
+        let viewport = [vk::Viewport::default()
+            .y(swapchain_extent.height as f32)
+            .width(swapchain_extent.width as f32)
+            .height(-(swapchain_extent.height as f32))
+            .max_depth(1.0)
+            .min_depth(0.0)];
+
+        let scissors = [vk::Rect2D {
+            extent: swapchain_extent,
+            ..Default::default()
+        }];
+
+        device.cmd_set_viewport(cmd, 0, &viewport);
+        device.cmd_set_scissor(cmd, 0, &scissors);
+
+        #[allow(dead_code)]
+        struct PushConstants {
+            view_proj: glam::Mat4,
+            vertex_buffer: vk::DeviceAddress,
+            mesh_buffer: vk::DeviceAddress,
+            object_buffer: vk::DeviceAddress,
+        }
+        let pc = PushConstants {
+            view_proj,
+            vertex_buffer: state.vertex_buffer.address,
+            mesh_buffer: state.mesh_buffer.address,
+            object_buffer: state.object_buffer.address,
+        };
+        mew::push_constants(&device, cmd, state.pipeline_layout, &pc);
+
+        device.cmd_bind_index_buffer(cmd, state.index_buffer.buffer, 0, vk::IndexType::UINT32);
+
+        device.cmd_draw_indexed_indirect(
+            cmd,
+            state.draw_indirect_buffer.buffer,
+            0,
+            renderables_count as u32,
+            // std::mem::size_of::<vk::DrawIndexedIndirectCommand>() as u32,
+            20,
+        );
+
+        device.cmd_end_rendering(cmd);
     };
 
     mew::giga_barrier(&device, cmd);
 
+    // copy to swapchain
     unsafe {
         device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, state.copy_pipeline);
         #[allow(dead_code)]
@@ -523,6 +729,13 @@ fn render_loop(state: &mut State) {
     image_memory_barrier.image = state.engine.swapchain.images[swapchain_idx];
     image_memory_barrier.old_layout = vk::ImageLayout::GENERAL;
     image_memory_barrier.new_layout = vk::ImageLayout::PRESENT_SRC_KHR;
+    image_memory_barrier.subresource_range = vk::ImageSubresourceRange {
+        aspect_mask: vk::ImageAspectFlags::COLOR,
+        base_mip_level: 0,
+        level_count: 1,
+        base_array_layer: 0,
+        layer_count: 1,
+    };
     image_memory_barriers.clear();
     image_memory_barriers.push(image_memory_barrier);
 
@@ -605,7 +818,9 @@ fn recreate_resources_on_swapchain_resize(state: &mut State) {
         &mut state.engine.allocator,
         state.engine.swapchain.extent,
         vk::Format::R16G16B16A16_SFLOAT,
-        vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_SRC,
+        vk::ImageUsageFlags::STORAGE
+            | vk::ImageUsageFlags::TRANSFER_SRC
+            | vk::ImageUsageFlags::COLOR_ATTACHMENT,
         vk::ImageAspectFlags::COLOR,
         false,
     );
@@ -648,9 +863,10 @@ fn recreate_resources_on_swapchain_resize(state: &mut State) {
 }
 
 fn main() {
-    // unsafe {
-    //     std::env::remove_var("WAYLAND_DISPLAY");
-    // }
+    unsafe {
+        std::env::remove_var("WAYLAND_DISPLAY");
+    }
+
     let event_loop = EventLoop::new().unwrap();
 
     event_loop.set_control_flow(ControlFlow::Poll);

@@ -6,6 +6,7 @@ type mat4x4 = glam::Mat4;
 pub struct Scene {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
+    pub meshes: Vec<Mesh>,
     pub nodes: Vec<Node>,
     pub node_transforms: Vec<NodeTransform>,
     pub renderables: Vec<ObjectData>,
@@ -33,15 +34,17 @@ pub struct MeshAsset {
 }
 
 pub struct Mesh {
-    vertex_offset: u32,
-    first_index: u32,
-    index_count: u32,
+    pub vertex_offset: u32,
+    pub first_index: u32,
+    pub index_count: u32,
+    pub padding: u32,
 }
 
 pub struct Vertex {
     pos: float3,
     padding: f32,
     normal: float3,
+    padding2: f32,
 }
 
 fn get_indices(
@@ -186,6 +189,7 @@ pub fn load_gltf(path: &str) -> Scene {
     let mut positions: Vec<float3> = Vec::new();
     let mut normals: Vec<float3> = Vec::new();
 
+
     // We need a threadsafe container for parallel loading?
     for m in &gltf.meshes {
         let mesh: MeshAsset = MeshAsset {
@@ -202,8 +206,9 @@ pub fn load_gltf(path: &str) -> Scene {
             // For global combined index buffer
             meshes.push(Mesh {
                 vertex_offset: positions.len() as u32,
-                index_count,
                 first_index,
+                index_count,
+                padding: 0,
             });
 
             let positions_idx = primitive.attributes.position.unwrap();
@@ -222,7 +227,7 @@ pub fn load_gltf(path: &str) -> Scene {
 
     // May need to move into loop above
     let iter = std::iter::zip(positions, normals);
-    let vertices: Vec<Vertex> = iter.map(|(pos, normal)| Vertex { pos, padding: 0.0, normal }).collect();
+    let vertices: Vec<Vertex> = iter.map(|(pos, normal)| Vertex { pos, padding: 0.0, normal, padding2: 0.0 }).collect();
 
     // Build nodes
     let mut nodes: Vec<Node> = Vec::new();
@@ -287,11 +292,10 @@ pub fn load_gltf(path: &str) -> Scene {
         });
     });
 
-    dbg!(renderables.len());
-
     Scene {
         vertices,
         indices,
+        meshes,
         nodes,
         node_transforms,
         renderables,

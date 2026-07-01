@@ -198,21 +198,26 @@ impl Engine {
             instance.get_physical_device_features2(pdevice, &mut enabled_features);
         }
 
+        assert!(enabled_features.features.multi_draw_indirect > 0);
         assert!(enabled_vulkan_1_2_features.buffer_device_address > 0);
         assert!(enabled_vulkan_1_2_features.descriptor_binding_partially_bound > 0);
         assert!(enabled_vulkan_1_2_features.descriptor_binding_variable_descriptor_count > 0);
+        assert!(enabled_vulkan_1_2_features.draw_indirect_count > 0);
+        assert!(enabled_vulkan_1_2_features.scalar_block_layout > 0);
         assert!(enabled_vulkan_1_2_features.runtime_descriptor_array > 0);
         assert!(enabled_vulkan_1_3_features.synchronization2 > 0);
         assert!(enabled_vulkan_1_3_features.dynamic_rendering > 0);
 
-        let vulkan_1_0_features = vk::PhysicalDeviceFeatures::default();
+        let vulkan_1_0_features = vk::PhysicalDeviceFeatures::default().multi_draw_indirect(true);
         let mut vulkan_1_1_features =
             vk::PhysicalDeviceVulkan11Features::default().shader_draw_parameters(true);
         let mut vulkan_1_2_features = vk::PhysicalDeviceVulkan12Features::default()
             .buffer_device_address(true)
             .descriptor_binding_partially_bound(true)
             .descriptor_binding_variable_descriptor_count(true)
-            .runtime_descriptor_array(true);
+            .runtime_descriptor_array(true)
+            .draw_indirect_count(true)
+            .scalar_block_layout(true);
         let mut vulkan_1_3_features = vk::PhysicalDeviceVulkan13Features::default()
             .synchronization2(true)
             .dynamic_rendering(true);
@@ -947,4 +952,18 @@ fn get_buffer_address(device: &Device, buffer: vk::Buffer) -> vk::DeviceAddress 
     let buffer_address_info = vk::BufferDeviceAddressInfo::default().buffer(buffer);
 
     unsafe { device.get_buffer_device_address(&buffer_address_info) }
+}
+
+pub fn get_infinite_reverse_perspective_matrix(fovy: f32, aspect: f32, near: f32) -> glam::Mat4 {
+    let f = 1.0 / (fovy / 2.0).tan();
+
+    #[rustfmt::skip]
+    let matrix = glam::Mat4::from_cols_array(&[
+	    f / aspect, 0.0,  0.0,  0.0,
+	           0.0,   f,  0.0,  0.0,
+	           0.0, 0.0,  0.0, -1.0,
+	           0.0, 0.0, near,  0.0
+	]);
+
+    matrix
 }
