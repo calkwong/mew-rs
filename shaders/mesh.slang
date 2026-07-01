@@ -1,14 +1,5 @@
 import types;
 
-// TODO: move to a module
-[vk::binding(0, 1)]
-__DynamicResource<__DynamicResourceKind.General> storage_images[];
-
-public T get_storage_image<T>(uint handle)
-    where T : IOpaqueDescriptor {
-  return storage_images[handle].asOpaqueDescriptor<T>();
-}
-
 struct Interp {
   float4 position : SV_Position;
   float3 normal;

@@ -1,11 +1,4 @@
-// TODO: move to a module
-[vk::binding(0, 1)]
-__DynamicResource<__DynamicResourceKind.General> storage_images[];
-
-public T get_storage_image<T>(uint handle)
-    where T : IOpaqueDescriptor {
-  return storage_images[handle].asOpaqueDescriptor<T>();
-}
+import bindings;
 
 struct PushConstants {
   uint src_id;
