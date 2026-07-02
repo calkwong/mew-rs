@@ -13,7 +13,8 @@ use winit::{
 };
 
 const FRAMES_IN_FLIGHT: usize = 2;
-const QUERY_COUNT: u32 = 10;
+const MAX_QUERY_COUNT: u32 = 10;
+const CURRENT_QUERIES: u32 = 1;
 
 struct State {
     window: Window,
@@ -120,7 +121,7 @@ impl State {
 
         let query_info = vk::QueryPoolCreateInfo::default()
             .query_type(vk::QueryType::PIPELINE_STATISTICS)
-            .query_count(QUERY_COUNT)
+            .query_count(MAX_QUERY_COUNT)
             .pipeline_statistics(vk::QueryPipelineStatisticFlags::CLIPPING_INVOCATIONS);
 
         unsafe {
@@ -707,8 +708,25 @@ fn render_loop(state: &mut State) {
         device.reset_fences(&[fence]).unwrap();
     }
 
+    if state.frame_index >= FRAMES_IN_FLIGHT {
+        let mut pipeline_query_results = [0u64; CURRENT_QUERIES as usize];
+        unsafe {
+            device
+                .get_query_pool_results(
+                    frame_data.pipeline_query,
+                    0,
+                    &mut pipeline_query_results,
+                    vk::QueryResultFlags::TYPE_64,
+                )
+                .unwrap();
+        }
+
+        let triangle_count = pipeline_query_results[0];
+        dbg!(triangle_count);
+    }
+
     unsafe {
-        device.reset_query_pool(frame_data.pipeline_query, 0, QUERY_COUNT);
+        device.reset_query_pool(frame_data.pipeline_query, 0, MAX_QUERY_COUNT);
     }
 
     let mut image_memory_barrier = vk::ImageMemoryBarrier2::default()
