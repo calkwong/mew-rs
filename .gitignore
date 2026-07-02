@@ -1,5 +1,5 @@
 /target
 .ninja_log
-*.spv
+/shaders/compiled
 /assets
 .zed

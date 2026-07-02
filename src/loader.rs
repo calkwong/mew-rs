@@ -35,7 +35,6 @@ pub struct Mesh {
     pub vertex_offset: u32,
     pub first_index: u32,
     pub index_count: u32,
-    pub padding: u32,
 }
 
 pub struct Vertex {
@@ -201,7 +200,6 @@ pub fn load_gltf(path: &str) -> Scene {
                 vertex_offset: positions.len() as u32,
                 first_index,
                 index_count,
-                padding: 0,
             });
 
             let positions_idx = primitive.attributes.position.unwrap();

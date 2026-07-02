@@ -644,7 +644,7 @@ fn render_loop(state: &mut State) {
     let frame_data = &state.frame_data[current_index];
     let fence = frame_data.fence;
     unsafe {
-        device.wait_for_fences(&[fence], true, u64::MAX).unwrap();
+        device.wait_for_fences(&[fence], true, 1000000000).unwrap();
     }
 
     let acquire_semaphore = frame_data.image_acquired_semaphore;
@@ -653,7 +653,7 @@ fn render_loop(state: &mut State) {
     unsafe {
         let acquire_result = state.engine.swapchain.loader.acquire_next_image(
             state.engine.swapchain.swapchain,
-            u64::MAX,
+            1000000000,
             acquire_semaphore,
             Fence::null(),
         );
@@ -1049,9 +1049,9 @@ fn recreate_resources_on_swapchain_resize(state: &mut State) {
 }
 
 fn main() {
-    // unsafe {
-    //     std::env::remove_var("WAYLAND_DISPLAY");
-    // }
+    unsafe {
+        std::env::remove_var("WAYLAND_DISPLAY");
+    }
 
     let event_loop = EventLoop::new().unwrap();
 
