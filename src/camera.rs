@@ -62,7 +62,7 @@ impl Camera {
             glam::Quat::from_axis_angle(glam::Vec3::new(1.0, 0.0, 0.0), self.pitch);
         let yaw_rotation = glam::Quat::from_axis_angle(glam::Vec3::new(0.0, -1.0, 0.0), self.yaw);
 
-        pitch_rotation * yaw_rotation
+        yaw_rotation * pitch_rotation
     }
 
     pub fn get_view_matrix(&self) -> glam::Mat4 {
@@ -77,6 +77,7 @@ impl Camera {
     pub fn process_mouse_input(&mut self, x: f32, y: f32) {
         self.yaw += x * self.sensitivity;
         self.pitch -= y * self.sensitivity;
+        self.pitch = self.pitch.clamp(-89.0_f32.to_radians(), 89.0_f32.to_radians());
     }
 
     pub fn process_input(&mut self, key: Key, state: KeyState) {
