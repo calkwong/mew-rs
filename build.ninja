@@ -1,11 +1,7 @@
-rule slangmodule
-    command = slangc $in -fvk-use-scalar-layout -matrix-layout-column-major -fvk-use-entrypoint-name -Wno-39001 -depfile ${out}.d -o $out
-
 rule slang
     command = slangc $in -target spirv -fvk-use-scalar-layout -matrix-layout-column-major -fvk-use-entrypoint-name -Wno-39001 -I "shaders/compiled/" -I "shaders/modules/" -depfile ${out}.d -o $out
-
-build shaders/compiled/bindings.slang-module: slangmodule shaders/modules/bindings.slang
-build shaders/compiled/types.slang-module: slangmodule shaders/modules/types.slang
+    depfile = ${out}.d
+    deps = gcc
 
 build shaders/compiled/copy_swapchain.spv: slang shaders/copy_swapchain.slang
 build shaders/compiled/mesh.spv: slang shaders/mesh.slang
