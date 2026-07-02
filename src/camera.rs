@@ -1,10 +1,12 @@
 use glam;
 use glam::Vec3;
+use glam::Quat;
 
 pub struct Camera {
     state: InputState,
     pub position: Vec3,
     velocity: Vec3,
+    orientation: Quat,
     pitch: f32,
     yaw: f32,
     pub near: f32,
@@ -40,6 +42,7 @@ impl Default for Camera {
             state: InputState::default(),
             position: Vec3::new(0.0, 0.0, 0.0),
             velocity: Vec3::new(0.0, 0.0, 0.0),
+            orientation: Quat::default(),
             pitch: 0.0,
             yaw: 0.0,
             near: 0.1,
@@ -57,16 +60,16 @@ impl Camera {
         self
     }
 
-    fn get_orientation(&self) -> glam::Quat {
+    fn update_orientation(&self) -> Quat {
         let pitch_rotation =
-            glam::Quat::from_axis_angle(glam::Vec3::new(1.0, 0.0, 0.0), self.pitch);
-        let yaw_rotation = glam::Quat::from_axis_angle(glam::Vec3::new(0.0, -1.0, 0.0), self.yaw);
+            Quat::from_axis_angle(glam::Vec3::new(1.0, 0.0, 0.0), self.pitch);
+        let yaw_rotation = Quat::from_axis_angle(glam::Vec3::new(0.0, -1.0, 0.0), self.yaw);
 
         yaw_rotation * pitch_rotation
     }
 
     pub fn get_view_matrix(&self) -> glam::Mat4 {
-        let inv_orientation = self.get_orientation().conjugate();
+        let inv_orientation = self.orientation.conjugate();
         let mut view = glam::Mat4::from_quat(inv_orientation);
         let rotated_pos = inv_orientation.mul_vec3(-self.position);
         view.w_axis = glam::Vec4::new(rotated_pos.x, rotated_pos.y, rotated_pos.z, 1.0);
@@ -97,8 +100,7 @@ impl Camera {
     }
 
     pub fn update(&mut self, delta_time: f32) {
-        // TODO: make orientation part of Camera struct
-        let orientation = self.get_orientation();
-        self.position += orientation * (self.velocity * self.speed * delta_time);
+        self.orientation = self.update_orientation();
+        self.position += self.orientation * (self.velocity * self.speed * delta_time);
     }
 }
