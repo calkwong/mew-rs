@@ -514,19 +514,15 @@ impl ApplicationHandler for App {
 
                     if state.engine.swapchain.dirty {
                         let window_size = state.window.inner_size();
-                        if window_size.width == state.engine.swapchain.extent.width
-                            && window_size.height == state.engine.swapchain.extent.height
-                        {
-                            state.engine.swapchain.dirty = false;
-                            return;
-                        }
 
                         let new_extent = vk::Extent2D {
                             width: window_size.width as u32,
                             height: window_size.height as u32,
                         };
+
                         mew::recreate_swapchain(&mut state.engine, new_extent);
                         recreate_resources_on_swapchain_resize(state);
+                        state.engine.swapchain.dirty = false;
                     }
                 }
             }
@@ -655,10 +651,8 @@ fn render_loop(state: &mut State) {
                 panic!("Failed to acquire next image: {e:?}");
             }
         }
-
         device.reset_fences(&[fence]).unwrap();
     }
-
     let mut image_memory_barrier = vk::ImageMemoryBarrier2::default()
         .image(state.engine.swapchain.images[swapchain_idx])
         .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
@@ -909,7 +903,6 @@ fn render_loop(state: &mut State) {
     };
 
     state.frame_index += 1;
-    dbg!(state.frame_index);
 }
 
 // This is project specific
