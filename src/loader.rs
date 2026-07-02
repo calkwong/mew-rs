@@ -7,9 +7,10 @@ pub struct Scene {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
     pub meshes: Vec<Mesh>,
+    pub renderables: Vec<ObjectData>,
+    // For pure static scene, technically we don't need these
     pub nodes: Vec<Node>,
     pub node_transforms: Vec<NodeTransform>,
-    pub renderables: Vec<ObjectData>,
 }
 
 pub struct ObjectData {
@@ -18,7 +19,7 @@ pub struct ObjectData {
 }
 
 pub struct Node {
-    mesh: MeshAsset,
+    mesh: Option<MeshAsset>,
     children: Vec<usize>, // child nodes
 }
 
@@ -178,14 +179,12 @@ pub fn load_gltf(path: &str) -> Scene {
     let buffer_data: &[u8] = &buffer;
 
     // Each mesh which holds a vector of primitives is mapped to a Node
-    // let mut meshes: Vec<Vec<Mesh>> = Vec::new();
     let mut mesh_assets: Vec<MeshAsset> = Vec::new();
     let mut meshes: Vec<Mesh> = Vec::new();
 
     let mut indices: Vec<u32> = Vec::new();
     let mut positions: Vec<float3> = Vec::new();
     let mut normals: Vec<float3> = Vec::new();
-
 
     // We need a threadsafe container for parallel loading?
     for m in &gltf.meshes {
@@ -224,47 +223,50 @@ pub fn load_gltf(path: &str) -> Scene {
 
     // May need to move into loop above
     let iter = std::iter::zip(positions, normals);
-    let vertices: Vec<Vertex> = iter.map(|(pos, normal)| Vertex { pos, padding: 0.0, normal, padding2: 0.0 }).collect();
+    let vertices: Vec<Vertex> = iter
+        .map(|(pos, normal)| Vertex {
+            pos,
+            padding: 0.0,
+            normal,
+            padding2: 0.0,
+        })
+        .collect();
 
-    // Build nodes
+    // Build all nodes
     let mut nodes: Vec<Node> = Vec::new();
     let mut node_transforms: Vec<NodeTransform> = Vec::new();
     for gltf_node in &gltf.nodes {
-        if gltf_node.mesh.is_none() {
-            continue;
-        }
-
-        if let Some(index) = gltf_node.mesh {
-            let new_node = Node {
-                mesh: mesh_assets[index],
-                children: gltf_node.children.clone(),
-            };
-
-            nodes.push(new_node);
-        }
-
-        let mut local_transform = mat4x4::IDENTITY;
-
-        match (
-            gltf_node.matrix,
-            gltf_node.translation,
-            gltf_node.rotation,
-            gltf_node.scale,
-        ) {
-            (Some(matrix), None, None, None) => {
-                local_transform = mat4x4::from_cols_array(&matrix);
+        let new_node: Node;
+        match gltf_node.mesh {
+            Some(index) => {
+                new_node = Node {
+                    mesh: Some(mesh_assets[index]),
+                    children: gltf_node.children.clone(),
+                };
             }
-            (_, Some(translation), Some(rotation), Some(scale)) => {
-                let scale = glam::vec3(scale[0], scale[1], scale[2]);
-                // TODO: verify not wxyz
-                let rotation =
-                    glam::Quat::from_xyzw(rotation[0], rotation[1], rotation[2], rotation[3]);
-                let translation = glam::vec3(translation[0], translation[1], translation[2]);
-
-                local_transform =
-                    mat4x4::from_scale_rotation_translation(scale, rotation, translation);
+            None => {
+                new_node = Node {
+                    mesh: None,
+                    children: gltf_node.children.clone(),
+                };
             }
-            _ => {}
+        }
+        nodes.push(new_node);
+
+        let local_transform = if let Some(matrix) = gltf_node.matrix {
+            mat4x4::from_cols_array(&matrix)
+        } else {
+            let scale = gltf_node.scale.unwrap_or([1.0, 1.0, 1.0]);
+            let rotation = gltf_node.rotation.unwrap_or([0.0, 0.0, 0.0, 1.0]);
+            let translation = gltf_node.translation.unwrap_or([0.0, 0.0, 0.0]);
+
+            let scale = glam::vec3(scale[0], scale[1], scale[2]);
+            let rotation =
+                glam::Quat::from_xyzw(rotation[0], rotation[1], rotation[2], rotation[3]);
+            let translation = glam::vec3(translation[0], translation[1], translation[2]);
+
+            mat4x4::from_scale_rotation_translation(scale, rotation, translation)
+
         };
 
         node_transforms.push(NodeTransform {
@@ -274,6 +276,7 @@ pub fn load_gltf(path: &str) -> Scene {
     }
 
     // Apply parent-child transforms
+    dbg!(&gltf.scenes.len());
     for child_index in &gltf.scenes[0].nodes {
         refresh_transform(&nodes, &mut node_transforms, *child_index, mat4x4::IDENTITY);
     }
@@ -281,21 +284,23 @@ pub fn load_gltf(path: &str) -> Scene {
     let mut renderables: Vec<ObjectData> = Vec::new();
 
     nodes.iter().enumerate().for_each(|(index, node)| {
-        (0..node.mesh.count).for_each(|i| {
-            renderables.push(ObjectData {
-                world_transform: node_transforms[index as usize].world_transform,
-                mesh_id: node.mesh.mesh_id + i,
-            })
-        });
+        if let Some(mesh) = node.mesh {
+            (0..mesh.count).for_each(|i| {
+                renderables.push(ObjectData {
+                    world_transform: node_transforms[index as usize].world_transform,
+                    mesh_id: mesh.mesh_id + i,
+                })
+            });
+        }
     });
 
     Scene {
         vertices,
         indices,
         meshes,
+        renderables,
         nodes,
         node_transforms,
-        renderables,
     }
 }
 
