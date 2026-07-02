@@ -75,11 +75,12 @@ impl Engine {
         let entry = Entry::linked();
 
         let window = window.unwrap();
-        // window
-            // TODO: occasionally panics, why?
-            // .set_cursor_grab(winit::window::CursorGrabMode::Confined)
-            // .unwrap();
-        // window.set_cursor_visible(false);
+
+        // CursorGrabMode::Locked not supported on X11
+        // If we fallback to Confined, we get choppy rendering possibly related: https://github.com/rust-windowing/winit/issues/3773
+        let _ = window.set_cursor_grab(winit::window::CursorGrabMode::Locked);
+
+        window.set_cursor_visible(false);
 
         let window_handle = window
             .window_handle()
