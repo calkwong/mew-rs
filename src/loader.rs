@@ -1,7 +1,4 @@
-#![allow(non_camel_case_types)]
-
-type float3 = glam::Vec3;
-type mat4x4 = glam::Mat4;
+use glam::{Vec3, Mat4};
 
 pub struct Scene {
     pub vertices: Vec<Vertex>,
@@ -14,7 +11,7 @@ pub struct Scene {
 }
 
 pub struct ObjectData {
-    world_transform: mat4x4,
+    world_transform: Mat4,
     mesh_id: u32,
 }
 
@@ -24,8 +21,8 @@ pub struct Node {
 }
 
 pub struct NodeTransform {
-    local_transform: mat4x4,
-    world_transform: mat4x4,
+    local_transform: Mat4,
+    world_transform: Mat4,
 }
 
 #[derive(Copy, Clone)]
@@ -42,9 +39,9 @@ pub struct Mesh {
 }
 
 pub struct Vertex {
-    pos: float3,
+    pos: Vec3,
     padding: f32,
-    normal: float3,
+    normal: Vec3,
     padding2: f32,
 }
 
@@ -85,7 +82,7 @@ fn get_indices(
 fn get_positions(
     gltf: &goth_gltf::Gltf<goth_gltf::default_extensions::Extensions>,
     buffer_data: &[u8],
-    out_buffer: &mut Vec<float3>,
+    out_buffer: &mut Vec<Vec3>,
     accessor_index: usize,
 ) {
     let accessor = &gltf.accessors[accessor_index];
@@ -116,15 +113,15 @@ fn get_positions(
         let y = get(1);
         let z = get(2);
 
-        float3 { x, y, z }
+        Vec3 { x, y, z }
     }))
 }
 
-// TODO: turn into get_float3 instead?
+// TODO: turn into get_Vec3 instead?
 fn get_normals(
     gltf: &goth_gltf::Gltf<goth_gltf::default_extensions::Extensions>,
     buffer_data: &[u8],
-    out_buffer: &mut Vec<float3>,
+    out_buffer: &mut Vec<Vec3>,
     accessor_index: usize,
 ) {
     let accessor = &gltf.accessors[accessor_index];
@@ -155,7 +152,7 @@ fn get_normals(
         let y = get(1);
         let z = get(2);
 
-        float3 { x, y, z }
+        Vec3 { x, y, z }
     }))
 }
 
@@ -183,8 +180,8 @@ pub fn load_gltf(path: &str) -> Scene {
     let mut meshes: Vec<Mesh> = Vec::new();
 
     let mut indices: Vec<u32> = Vec::new();
-    let mut positions: Vec<float3> = Vec::new();
-    let mut normals: Vec<float3> = Vec::new();
+    let mut positions: Vec<Vec3> = Vec::new();
+    let mut normals: Vec<Vec3> = Vec::new();
 
     // We need a threadsafe container for parallel loading?
     for m in &gltf.meshes {
@@ -254,7 +251,7 @@ pub fn load_gltf(path: &str) -> Scene {
         nodes.push(new_node);
 
         let local_transform = if let Some(matrix) = gltf_node.matrix {
-            mat4x4::from_cols_array(&matrix)
+            Mat4::from_cols_array(&matrix)
         } else {
             let scale = gltf_node.scale.unwrap_or([1.0, 1.0, 1.0]);
             let rotation = gltf_node.rotation.unwrap_or([0.0, 0.0, 0.0, 1.0]);
@@ -265,19 +262,19 @@ pub fn load_gltf(path: &str) -> Scene {
                 glam::Quat::from_xyzw(rotation[0], rotation[1], rotation[2], rotation[3]);
             let translation = glam::vec3(translation[0], translation[1], translation[2]);
 
-            mat4x4::from_scale_rotation_translation(scale, rotation, translation)
+            Mat4::from_scale_rotation_translation(scale, rotation, translation)
 
         };
 
         node_transforms.push(NodeTransform {
             local_transform,
-            world_transform: mat4x4::IDENTITY,
+            world_transform: Mat4::IDENTITY,
         });
     }
 
     // Apply parent-child transforms
     for child_index in &gltf.scenes[0].nodes {
-        refresh_transform(&nodes, &mut node_transforms, *child_index, mat4x4::IDENTITY);
+        refresh_transform(&nodes, &mut node_transforms, *child_index, Mat4::IDENTITY);
     }
 
     let mut renderables: Vec<ObjectData> = Vec::new();
@@ -307,7 +304,7 @@ fn refresh_transform(
     nodes: &Vec<Node>,
     node_transforms: &mut Vec<NodeTransform>,
     index: usize,
-    parent_matrix: mat4x4,
+    parent_matrix: Mat4,
 ) {
     node_transforms[index].world_transform = parent_matrix * node_transforms[index].local_transform;
 
