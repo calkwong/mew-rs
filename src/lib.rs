@@ -19,6 +19,14 @@ pub mod descriptors;
 pub mod loader;
 pub mod camera;
 
+#[derive(Default, Copy, Clone)]
+pub struct FrameData {
+    pub command_pool: vk::CommandPool,
+    pub command_buffer: vk::CommandBuffer,
+    pub fence: vk::Fence,
+    pub image_acquired_semaphore: vk::Semaphore,
+}
+
 pub struct Swapchain {
     pub loader: swapchain::Device,
     pub swapchain: SwapchainKHR,

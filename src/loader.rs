@@ -276,7 +276,6 @@ pub fn load_gltf(path: &str) -> Scene {
     }
 
     // Apply parent-child transforms
-    dbg!(&gltf.scenes.len());
     for child_index in &gltf.scenes[0].nodes {
         refresh_transform(&nodes, &mut node_transforms, *child_index, mat4x4::IDENTITY);
     }

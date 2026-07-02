@@ -1,15 +1,18 @@
 use ash::vk::{self, Fence, Semaphore};
-use mew::camera::{Camera, Key, KeyState};
+use mew::{
+    FrameData,
+    camera::{Camera, Key, KeyState},
+};
+use std::time::Instant;
 use winit::{
     application::ApplicationHandler,
-    event::{ElementState, WindowEvent, DeviceEvent, DeviceId},
+    event::{DeviceEvent, DeviceId, ElementState, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     keyboard::{KeyCode, PhysicalKey::Code},
     window::{Window, WindowId},
 };
-use std::time::Instant;
 
-const FRAMES_IN_FLIGHT: usize = 1;
+const FRAMES_IN_FLIGHT: usize = 2;
 
 struct State {
     window: Window,
@@ -18,11 +21,8 @@ struct State {
     engine: mew::Engine,
     draw_image: mew::Image,
     depth_image: mew::Image,
-    command_pools: Vec<vk::CommandPool>,
-    command_buffers: Vec<vk::CommandBuffer>,
-    fences: Vec<Fence>,
+    frame_data: [mew::FrameData; FRAMES_IN_FLIGHT],
     render_done_semaphores: Vec<Semaphore>,
-    image_acquired_semaphores: Vec<Semaphore>,
     frame_index: usize,
     copy_pipeline: vk::Pipeline,
     draw_pipeline: vk::Pipeline,
@@ -63,50 +63,55 @@ impl State {
             false,
         );
 
+        // frame data
+        let mut frame_data: [FrameData; FRAMES_IN_FLIGHT] = [FrameData::default(); FRAMES_IN_FLIGHT];
+
         let command_pool_info =
             vk::CommandPoolCreateInfo::default().queue_family_index(engine.queue_family_index);
-        let command_pools: Vec<vk::CommandPool> = unsafe {
-            (0..FRAMES_IN_FLIGHT)
-                .map(|_| {
-                    device
-                        .create_command_pool(&command_pool_info, None)
-                        .unwrap()
-                })
-                .collect()
-        };
 
-        let command_buffers: Vec<vk::CommandBuffer> = command_pools
-            .iter()
-            .map(|pool| unsafe {
+        unsafe {
+            (0..FRAMES_IN_FLIGHT).for_each(|i| {
+                frame_data[i].command_pool = device
+                    .create_command_pool(&command_pool_info, None)
+                    .unwrap();
+            });
+        }
+
+        unsafe {
+            (0..FRAMES_IN_FLIGHT).for_each(|i| {
+                let pool = &frame_data[i].command_pool;
+
                 let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::default()
                     .command_pool(*pool)
                     .level(vk::CommandBufferLevel::PRIMARY)
                     .command_buffer_count(1);
 
                 // note: a single command buffer per command pool
-                device
+                frame_data[i].command_buffer = device
                     .allocate_command_buffers(&command_buffer_allocate_info)
-                    .unwrap()[0]
-            })
-            .collect();
+                    .unwrap()[0];
+            });
+        }
 
         let fence_info = vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
 
-        let fences: Vec<vk::Fence> = unsafe {
-            (0..FRAMES_IN_FLIGHT)
-                .map(|_| device.create_fence(&fence_info, None).unwrap())
-                .collect()
-        };
+        unsafe {
+            (0..FRAMES_IN_FLIGHT).for_each(|i| {
+                frame_data[i].fence = device.create_fence(&fence_info, None).unwrap();
+            });
+        }
 
         let semaphore_info = vk::SemaphoreCreateInfo::default();
+
+        unsafe {
+            (0..FRAMES_IN_FLIGHT).for_each(|i| {
+                frame_data[i].image_acquired_semaphore =
+                    device.create_semaphore(&semaphore_info, None).unwrap()
+            });
+        }
+
         let render_done_semaphores: Vec<vk::Semaphore> = unsafe {
             (0..engine.swapchain.images.len())
-                .map(|_| device.create_semaphore(&semaphore_info, None).unwrap())
-                .collect()
-        };
-
-        let image_acquired_semaphores: Vec<vk::Semaphore> = unsafe {
-            (0..FRAMES_IN_FLIGHT)
                 .map(|_| device.create_semaphore(&semaphore_info, None).unwrap())
                 .collect()
         };
@@ -300,9 +305,9 @@ impl State {
         let vertex_buffer = mew::create_buffer_with_data(
             device,
             engine.graphics_queue,
-            fences[0],
-            command_pools[0],
-            command_buffers[0],
+            frame_data[0].fence,
+            frame_data[0].command_pool,
+            frame_data[0].command_buffer,
             &mut engine.allocator,
             gpu_allocator::MemoryLocation::GpuOnly,
             vk::BufferUsageFlags::STORAGE_BUFFER
@@ -319,9 +324,9 @@ impl State {
         let index_buffer = mew::create_buffer_with_data(
             device,
             engine.graphics_queue,
-            fences[0],
-            command_pools[0],
-            command_buffers[0],
+            frame_data[0].fence,
+            frame_data[0].command_pool,
+            frame_data[0].command_buffer,
             &mut engine.allocator,
             gpu_allocator::MemoryLocation::GpuOnly,
             vk::BufferUsageFlags::STORAGE_BUFFER
@@ -338,9 +343,9 @@ impl State {
         let mesh_buffer = mew::create_buffer_with_data(
             device,
             engine.graphics_queue,
-            fences[0],
-            command_pools[0],
-            command_buffers[0],
+            frame_data[0].fence,
+            frame_data[0].command_pool,
+            frame_data[0].command_buffer,
             &mut engine.allocator,
             gpu_allocator::MemoryLocation::GpuOnly,
             vk::BufferUsageFlags::STORAGE_BUFFER
@@ -357,9 +362,9 @@ impl State {
         let object_buffer = mew::create_buffer_with_data(
             device,
             engine.graphics_queue,
-            fences[0],
-            command_pools[0],
-            command_buffers[0],
+            frame_data[0].fence,
+            frame_data[0].command_pool,
+            frame_data[0].command_buffer,
             &mut engine.allocator,
             gpu_allocator::MemoryLocation::GpuOnly,
             vk::BufferUsageFlags::STORAGE_BUFFER
@@ -389,11 +394,8 @@ impl State {
             engine,
             draw_image,
             depth_image,
-            command_pools,
-            command_buffers,
-            fences,
+            frame_data,
             render_done_semaphores,
-            image_acquired_semaphores,
             frame_index: 0,
             copy_pipeline,
             draw_pipeline,
@@ -416,19 +418,13 @@ impl Drop for State {
         let device = &self.engine.device;
 
         unsafe {
-            self.command_pools.iter().for_each(|pool| {
-                device.destroy_command_pool(*pool, None);
-            });
-
-            self.fences.iter().for_each(|fence| {
-                device.destroy_fence(*fence, None);
+            self.frame_data.iter().for_each(|data| {
+                device.destroy_command_pool(data.command_pool, None);
+                device.destroy_fence(data.fence, None);
+                device.destroy_semaphore(data.image_acquired_semaphore, None);
             });
 
             self.render_done_semaphores.iter().for_each(|semaphore| {
-                device.destroy_semaphore(*semaphore, None);
-            });
-
-            self.image_acquired_semaphores.iter().for_each(|semaphore| {
                 device.destroy_semaphore(*semaphore, None);
             });
 
@@ -493,10 +489,12 @@ impl ApplicationHandler for App {
         match event {
             winit::event::DeviceEvent::MouseMotion { delta } => {
                 if let Some(state) = self.state.as_mut() {
-                    state.camera.process_mouse_input(delta.0 as f32, delta.1 as f32);
+                    state
+                        .camera
+                        .process_mouse_input(delta.0 as f32, delta.1 as f32);
                 }
-            },
-            _ => {},
+            }
+            _ => {}
         }
     }
 
@@ -627,19 +625,20 @@ fn render_loop(state: &mut State) {
     );
     let view_proj = proj * view;
 
-    let fence = state.fences[current_index];
+    let frame_data = &state.frame_data[current_index];
+    let fence = frame_data.fence;
     unsafe {
         device.wait_for_fences(&[fence], true, u64::MAX).unwrap();
 
         device
             .reset_command_pool(
-                state.command_pools[current_index],
+                frame_data.command_pool,
                 vk::CommandPoolResetFlags::empty(),
             )
             .unwrap();
     }
 
-    let cmd = state.command_buffers[current_index];
+    let cmd = frame_data.command_buffer;
     let cmd_begin_info =
         vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
 
@@ -670,7 +669,7 @@ fn render_loop(state: &mut State) {
             });
     }
 
-    let acquire_semaphore = state.image_acquired_semaphores[current_index];
+    let acquire_semaphore = frame_data.image_acquired_semaphore;
 
     let swapchain_idx: usize;
     unsafe {
@@ -678,7 +677,7 @@ fn render_loop(state: &mut State) {
             state.engine.swapchain.swapchain,
             u64::MAX,
             acquire_semaphore,
-            vk::Fence::null(),
+            Fence::null(),
         );
 
         match acquire_result {
