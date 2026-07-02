@@ -577,17 +577,18 @@ pub fn push_constants<T>(
     cmd: vk::CommandBuffer,
     layout: vk::PipelineLayout,
     data: &T,
+    scratch: &mut [u8],
 ) {
     let size = std::mem::size_of::<T>();
     let len = size / std::mem::size_of::<u8>();
 
     let as_u8_slice = unsafe { std::slice::from_raw_parts((data as *const T) as *const u8, len) };
 
-    let mut constants = [0u8; 256];
-    constants[..size].copy_from_slice(as_u8_slice);
+    scratch.fill(0u8);
+    scratch[..size].copy_from_slice(as_u8_slice);
 
     unsafe {
-        device.cmd_push_constants(cmd, layout, vk::ShaderStageFlags::ALL, 0, &constants);
+        device.cmd_push_constants(cmd, layout, vk::ShaderStageFlags::ALL, 0, scratch);
     }
 }
 

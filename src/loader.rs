@@ -201,7 +201,6 @@ pub fn load_gltf(path: &str) -> Scene {
             let positions_idx = primitive.attributes.position.unwrap();
             let new_positions = get_positions(&gltf, buffer_data, positions_idx);
 
-            // TODO: untested
             let mut center = Vec3::default();
             new_positions.iter().for_each(|p| {
                 center += p;

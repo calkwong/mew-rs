@@ -17,6 +17,7 @@ use winit::{
 const FRAMES_IN_FLIGHT: usize = 2;
 const MAX_QUERY_COUNT: u32 = 10;
 const CURRENT_QUERIES: u32 = 1;
+const MAX_PUSH_CONSTANTS_SIZE: u32 = 256;
 
 struct State {
     window: Window,
@@ -44,6 +45,9 @@ struct State {
 impl State {
     fn new(window: Option<Window>) -> Self {
         let mut engine = mew::Engine::new(window.as_ref());
+
+        assert_eq!(engine.properties.limits.max_push_constants_size, MAX_PUSH_CONSTANTS_SIZE);
+
         let camera = Camera::default().position(glam::Vec3::new(0.0, 0.0, 5.0));
 
         let device = &engine.device;
@@ -445,7 +449,6 @@ impl Drop for State {
         let device = &self.engine.device;
 
         unsafe {
-            // TODO: drop?
             self.frame_data.iter().for_each(|data| {
                 device.destroy_command_pool(data.command_pool, None);
                 device.destroy_fence(data.fence, None);
@@ -691,6 +694,8 @@ fn render_loop(state: &mut State) {
         device.reset_fences(&[fence]).unwrap();
     }
 
+    let mut push_constants_scratch = [0u8; MAX_PUSH_CONSTANTS_SIZE as usize];
+
     unsafe {
         device
             .reset_command_pool(frame_data.command_pool, vk::CommandPoolResetFlags::empty())
@@ -841,7 +846,7 @@ fn render_loop(state: &mut State) {
             far: state.camera.far,
             count: renderables_count as u32,
         };
-        mew::push_constants(&device, cmd, state.pipeline_layout, &pc);
+        mew::push_constants(&device, cmd, state.pipeline_layout, &pc, &mut push_constants_scratch);
 
         let group_count_x = mew::get_group_count(renderables_count as u32, 256);
         device.cmd_dispatch(cmd, group_count_x, 1, 1);
@@ -921,7 +926,7 @@ fn render_loop(state: &mut State) {
             mesh_buffer: state.mesh_buffer.address,
             object_buffer: state.object_buffer.address,
         };
-        mew::push_constants(&device, cmd, state.pipeline_layout, &pc);
+        mew::push_constants(&device, cmd, state.pipeline_layout, &pc, &mut push_constants_scratch);
 
         device.cmd_bind_index_buffer(cmd, state.index_buffer.buffer, 0, vk::IndexType::UINT32);
 
@@ -966,7 +971,7 @@ fn render_loop(state: &mut State) {
             src_id: 0,
             dst_id: swapchain_idx as u32 + 1,
         };
-        mew::push_constants(&device, cmd, state.pipeline_layout, &pc);
+        mew::push_constants(&device, cmd, state.pipeline_layout, &pc, &mut push_constants_scratch);
         let group_count_x = mew::get_group_count(state.engine.swapchain.extent.width, 8);
         let group_count_y = mew::get_group_count(state.engine.swapchain.extent.height, 8);
         device.cmd_dispatch(cmd, group_count_x, group_count_y, 1);
