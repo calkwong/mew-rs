@@ -645,7 +645,35 @@ fn render_loop(state: &mut State) {
     let fence = frame_data.fence;
     unsafe {
         device.wait_for_fences(&[fence], true, u64::MAX).unwrap();
+    }
 
+    let acquire_semaphore = frame_data.image_acquired_semaphore;
+
+    let swapchain_idx: usize;
+    unsafe {
+        let acquire_result = state.engine.swapchain.loader.acquire_next_image(
+            state.engine.swapchain.swapchain,
+            u64::MAX,
+            acquire_semaphore,
+            Fence::null(),
+        );
+
+        match acquire_result {
+            Ok((present_idx, _)) => {
+                swapchain_idx = present_idx as usize;
+            }
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) | Err(vk::Result::SUBOPTIMAL_KHR) => {
+                state.engine.swapchain.dirty = true;
+                return;
+            }
+            Err(e) => {
+                panic!("Failed to acquire next image: {e:?}");
+            }
+        }
+        device.reset_fences(&[fence]).unwrap();
+    }
+
+    unsafe {
         device
             .reset_command_pool(frame_data.command_pool, vk::CommandPoolResetFlags::empty())
             .unwrap();
@@ -682,32 +710,6 @@ fn render_loop(state: &mut State) {
             });
     }
 
-    let acquire_semaphore = frame_data.image_acquired_semaphore;
-
-    let swapchain_idx: usize;
-    unsafe {
-        let acquire_result = state.engine.swapchain.loader.acquire_next_image(
-            state.engine.swapchain.swapchain,
-            u64::MAX,
-            acquire_semaphore,
-            Fence::null(),
-        );
-
-        match acquire_result {
-            Ok((present_idx, _)) => {
-                swapchain_idx = present_idx as usize;
-            }
-            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) | Err(vk::Result::SUBOPTIMAL_KHR) => {
-                state.engine.swapchain.dirty = true;
-                return;
-            }
-            Err(e) => {
-                panic!("Failed to acquire next image: {e:?}");
-            }
-        }
-        device.reset_fences(&[fence]).unwrap();
-    }
-
     if state.frame_index >= FRAMES_IN_FLIGHT {
         let mut pipeline_query_results = [0u64; CURRENT_QUERIES as usize];
         unsafe {
@@ -721,8 +723,8 @@ fn render_loop(state: &mut State) {
                 .unwrap();
         }
 
-        let triangle_count = pipeline_query_results[0];
-        dbg!(triangle_count);
+        let _triangle_count = pipeline_query_results[0];
+        // dbg!(triangle_count);
     }
 
     unsafe {
