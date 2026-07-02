@@ -2,6 +2,7 @@ use glam;
 use glam::Vec3;
 
 pub struct Camera {
+    state: InputState,
     pub position: Vec3,
     velocity: Vec3,
     pitch: f32,
@@ -13,9 +14,30 @@ pub struct Camera {
     sensitivity: f32,
 }
 
+pub enum Key {
+    W,
+    A,
+    S,
+    D,
+}
+
+pub enum KeyState {
+    Pressed,
+    Released,
+}
+
+#[derive(Default)]
+struct InputState {
+    key_w: bool,
+    key_a: bool,
+    key_s: bool,
+    key_d: bool,
+}
+
 impl Default for Camera {
     fn default() -> Self {
         Camera {
+            state: InputState::default(),
             position: Vec3::new(0.0, 0.0, 0.0),
             velocity: Vec3::new(0.0, 0.0, 0.0),
             pitch: 0.0,
@@ -52,16 +74,25 @@ impl Camera {
         view
     }
 
-    // TODO: broken
-    pub fn process_input(&mut self, horizontal: f32, forward: f32) {
-        self.velocity.x = horizontal;
-        self.velocity.z = forward;
+    pub fn process_input(&mut self, key: Key, state: KeyState) {
+        match (key, state) {
+            (Key::W, KeyState::Pressed) => self.state.key_w = true,
+            (Key::A, KeyState::Pressed) => self.state.key_a = true,
+            (Key::S, KeyState::Pressed) => self.state.key_s = true,
+            (Key::D, KeyState::Pressed) => self.state.key_d = true,
+            (Key::W, KeyState::Released) => self.state.key_w = false,
+            (Key::A, KeyState::Released) => self.state.key_a = false,
+            (Key::S, KeyState::Released) => self.state.key_s = false,
+            (Key::D, KeyState::Released) => self.state.key_d = false,
+        }
+
+        self.velocity.x = (self.state.key_d as i32 - self.state.key_a as i32) as f32;
+        self.velocity.z = (self.state.key_s as i32 - self.state.key_w as i32) as f32;
     }
 
-    // TODO: deltatime
-    pub fn update(&mut self) {
+    pub fn update(&mut self, delta_time: f32) {
         // TODO: make orientation part of Camera struct
         let orientation = self.get_orientation();
-        self.position += orientation * (self.velocity * self.speed);
+        self.position += orientation * (self.velocity * self.speed * delta_time);
     }
 }

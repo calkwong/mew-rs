@@ -1,5 +1,5 @@
 use ash::vk::{self, Fence, Semaphore};
-use mew::camera::Camera;
+use mew::camera::{Camera, Key, KeyState};
 use winit::{
     application::ApplicationHandler,
     event::{ElementState, WindowEvent},
@@ -7,12 +7,14 @@ use winit::{
     keyboard::{KeyCode, PhysicalKey::Code},
     window::{Window, WindowId},
 };
+use std::time::Instant;
 
 const FRAMES_IN_FLIGHT: usize = 1;
 
 struct State {
     window: Window,
     camera: Camera,
+    last_frame_time: Option<Instant>,
     engine: mew::Engine,
     draw_image: mew::Image,
     depth_image: mew::Image,
@@ -383,6 +385,7 @@ impl State {
         let this = Self {
             window: window.unwrap(),
             camera,
+            last_frame_time: None,
             engine,
             draw_image,
             depth_image,
@@ -508,8 +511,6 @@ impl ApplicationHandler for App {
             }
             winit::event::WindowEvent::RedrawRequested => {
                 if let Some(state) = self.state.as_mut() {
-                    // TODO: verify no single frame delay
-                    state.camera.update();
                     render_loop(state);
 
                     if state.engine.swapchain.dirty {
@@ -536,19 +537,35 @@ impl ApplicationHandler for App {
                 ..
             } => {
                 let camera = &mut self.state.as_mut().unwrap().camera;
+
                 match (code, element_state) {
                     (KeyCode::Escape, ElementState::Pressed) => {
                         event_loop.exit();
                     }
-                    // TODO: broken
-                    (KeyCode::KeyW, ElementState::Pressed) => camera.process_input(0.0, 1.0),
-                    (KeyCode::KeyS, ElementState::Pressed) => camera.process_input(0.0, -1.0),
-                    (KeyCode::KeyA, ElementState::Pressed) => camera.process_input(1.0, 0.0),
-                    (KeyCode::KeyD, ElementState::Pressed) => camera.process_input(-1.0, 0.0),
-                    (KeyCode::KeyW, ElementState::Released) => camera.process_input(0.0, -1.0),
-                    (KeyCode::KeyS, ElementState::Released) => camera.process_input(0.0, 1.0),
-                    (KeyCode::KeyA, ElementState::Released) => camera.process_input(-1.0, 0.0),
-                    (KeyCode::KeyD, ElementState::Released) => camera.process_input(1.0, 0.0),
+                    (KeyCode::KeyW, ElementState::Pressed) => {
+                        camera.process_input(Key::W, KeyState::Pressed)
+                    }
+                    (KeyCode::KeyS, ElementState::Pressed) => {
+                        camera.process_input(Key::S, KeyState::Pressed)
+                    }
+                    (KeyCode::KeyA, ElementState::Pressed) => {
+                        camera.process_input(Key::A, KeyState::Pressed)
+                    }
+                    (KeyCode::KeyD, ElementState::Pressed) => {
+                        camera.process_input(Key::D, KeyState::Pressed)
+                    }
+                    (KeyCode::KeyW, ElementState::Released) => {
+                        camera.process_input(Key::W, KeyState::Released)
+                    }
+                    (KeyCode::KeyS, ElementState::Released) => {
+                        camera.process_input(Key::S, KeyState::Released)
+                    }
+                    (KeyCode::KeyA, ElementState::Released) => {
+                        camera.process_input(Key::A, KeyState::Released)
+                    }
+                    (KeyCode::KeyD, ElementState::Released) => {
+                        camera.process_input(Key::D, KeyState::Released)
+                    }
                     _ => {}
                 }
             }
@@ -557,7 +574,16 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(state) = self.state.as_ref() {
+        if let Some(state) = self.state.as_mut() {
+            let start = Instant::now();
+            if let Some(last_frame_time) = state.last_frame_time {
+                let delta_time = (start - last_frame_time).as_secs_f32();
+                state.last_frame_time = Some(start);
+                state.camera.update(delta_time);
+            } else {
+                state.last_frame_time = Some(start);
+            }
+
             state.window.request_redraw();
         }
     }
