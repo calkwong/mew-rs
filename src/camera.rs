@@ -74,6 +74,11 @@ impl Camera {
         view
     }
 
+    pub fn process_mouse_input(&mut self, x: f32, y: f32) {
+        self.yaw += x * self.sensitivity;
+        self.pitch -= y * self.sensitivity;
+    }
+
     pub fn process_input(&mut self, key: Key, state: KeyState) {
         match (key, state) {
             (Key::W, KeyState::Pressed) => self.state.key_w = true,

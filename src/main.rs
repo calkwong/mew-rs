@@ -2,7 +2,7 @@ use ash::vk::{self, Fence, Semaphore};
 use mew::camera::{Camera, Key, KeyState};
 use winit::{
     application::ApplicationHandler,
-    event::{ElementState, WindowEvent},
+    event::{ElementState, WindowEvent, DeviceEvent, DeviceId},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     keyboard::{KeyCode, PhysicalKey::Code},
     window::{Window, WindowId},
@@ -482,6 +482,22 @@ impl ApplicationHandler for App {
         );
 
         self.state = Some(State::new(window));
+    }
+
+    fn device_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _device_id: DeviceId,
+        event: DeviceEvent,
+    ) {
+        match event {
+            winit::event::DeviceEvent::MouseMotion { delta } => {
+                if let Some(state) = self.state.as_mut() {
+                    state.camera.process_mouse_input(delta.0 as f32, delta.1 as f32);
+                }
+            },
+            _ => {},
+        }
     }
 
     fn window_event(
