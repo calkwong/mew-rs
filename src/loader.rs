@@ -194,17 +194,9 @@ pub fn load_gltf(path: &str) -> Scene {
 
         for primitive in &m.primitives {
             let indices_idx = primitive.indices.unwrap();
+            let vertex_offset = positions.len() as u32;
             let first_index = indices.len() as u32;
             let index_count = get_indices(&gltf, buffer_data, &mut indices, indices_idx);
-
-            // For global combined index buffer
-            meshes.push(Mesh {
-                vertex_offset: positions.len() as u32,
-                first_index,
-                index_count,
-                radius: 0.0,
-                center: Vec3::default(),
-            });
 
             let positions_idx = primitive.attributes.position.unwrap();
             let new_positions = get_positions(&gltf, buffer_data, positions_idx);
@@ -226,6 +218,15 @@ pub fn load_gltf(path: &str) -> Scene {
             get_normals(&gltf, buffer_data, &mut normals, normal_idx);
 
             assert_eq!(positions.len(), normals.len());
+
+            // For global combined index buffer
+            meshes.push(Mesh {
+                vertex_offset: vertex_offset,
+                first_index,
+                index_count,
+                radius,
+                center,
+            });
         }
 
         mesh_assets.push(mesh);

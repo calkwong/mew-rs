@@ -1,7 +1,9 @@
 use ash::vk::{self, Fence, Semaphore};
+use glam::Vec4Swizzles;
 use mew::{
     FrameData,
     camera::{Camera, Key, KeyState},
+    giga_barrier,
 };
 use std::time::Instant;
 use winit::{
@@ -36,6 +38,7 @@ struct State {
     mesh_buffer: mew::Buffer,
     object_buffer: mew::Buffer,
     draw_indirect_buffer: mew::Buffer,
+    dispatch_buffer: mew::Buffer,
 }
 
 impl State {
@@ -65,7 +68,7 @@ impl State {
             false,
         );
 
-        // frame data
+        // Prepare frame data
         let mut frame_data: [FrameData; FRAMES_IN_FLIGHT] =
             [FrameData::default(); FRAMES_IN_FLIGHT];
 
@@ -399,7 +402,16 @@ impl State {
                 as u64,
         );
 
-        draw_indirect_buffer.size;
+        let dispatch_buffer = mew::create_buffer(
+            device,
+            &mut engine.allocator,
+            gpu_allocator::MemoryLocation::GpuOnly,
+            vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
+                | vk::BufferUsageFlags::STORAGE_BUFFER
+                | vk::BufferUsageFlags::INDIRECT_BUFFER
+                | vk::BufferUsageFlags::TRANSFER_DST,
+            (3 * std::mem::size_of::<u32>()) as u64,
+        );
 
         let this = Self {
             window: window.unwrap(),
@@ -421,6 +433,7 @@ impl State {
             mesh_buffer,
             object_buffer,
             draw_indirect_buffer,
+            dispatch_buffer,
         };
 
         this
@@ -456,6 +469,11 @@ impl Drop for State {
                 device,
                 &mut self.engine.allocator,
                 &mut self.draw_indirect_buffer,
+            );
+            mew::destroy_buffer(
+                device,
+                &mut self.engine.allocator,
+                &mut self.dispatch_buffer,
             );
 
             device.destroy_pipeline_layout(self.pipeline_layout, None);
@@ -723,8 +741,9 @@ fn render_loop(state: &mut State) {
                 .unwrap();
         }
 
+        // TODO: egui?
         let _triangle_count = pipeline_query_results[0];
-        // dbg!(triangle_count);
+        // dbg!(_triangle_count);
     }
 
     unsafe {
@@ -768,25 +787,58 @@ fn render_loop(state: &mut State) {
         vk::DependencyInfo::default().image_memory_barriers(&image_memory_barriers);
     unsafe { device.cmd_pipeline_barrier2(cmd, &dependency_info) };
 
-    // hack
+    // TODO: use in culling shader, or query for maxDrawCount if it xists?
     let renderables_count =
         state.object_buffer.size as usize / std::mem::size_of::<mew::loader::ObjectData>();
 
-    // dumb compute shader that builds draw indirect buffer
+    // Zero count buffer
+    unsafe {
+        device.cmd_fill_buffer(cmd, state.dispatch_buffer.buffer, 0, vk::WHOLE_SIZE, 0);
+    }
+    giga_barrier(device, cmd);
+
+    // Frustum culling
     unsafe {
         device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, state.cull_pipeline);
 
-        #[allow(dead_code)]
+        let proj_t = proj.transpose();
+        let m0 = proj_t.x_axis;
+        let m1 = proj_t.y_axis;
+        let m3 = proj_t.w_axis;
+        let left_plane = (m3 + m0).xyz().normalize();
+        let bottom_plane = (m3 + m1).xyz().normalize();
+
+        // dbg!(left_plane, bottom_plane);
+
+        let planes = glam::Vec4::new(left_plane.x, left_plane.z, bottom_plane.y, bottom_plane.z);
+        let p00 = proj.x_axis.x;
+        let p11 = proj.y_axis.y;
+
+        #[repr(C)]
         struct PushConstants {
+            view: glam::Mat4,
             mesh_buffer: vk::DeviceAddress,
             object_buffer: vk::DeviceAddress,
             draw_indirect_buffer: vk::DeviceAddress,
+            dispatch_buffer: vk::DeviceAddress,
+            planes: glam::Vec4,
+            p00: f32,
+            p11: f32,
+            near: f32,
+            far: f32,
             count: u32,
         }
         let pc = PushConstants {
+            view,
             mesh_buffer: state.mesh_buffer.address,
             object_buffer: state.object_buffer.address,
             draw_indirect_buffer: state.draw_indirect_buffer.address,
+            dispatch_buffer: state.dispatch_buffer.address,
+            planes,
+            p00,
+            p11,
+            near: state.camera.near,
+            far: state.camera.far,
             count: renderables_count as u32,
         };
         mew::push_constants(&device, cmd, state.pipeline_layout, &pc);
@@ -879,13 +931,22 @@ fn render_loop(state: &mut State) {
             0,
             vk::QueryControlFlags::empty(),
         );
-        device.cmd_draw_indexed_indirect(
+        device.cmd_draw_indexed_indirect_count(
             cmd,
             state.draw_indirect_buffer.buffer,
+            0,
+            state.dispatch_buffer.buffer,
             0,
             renderables_count as u32,
             std::mem::size_of::<vk::DrawIndexedIndirectCommand>() as u32,
         );
+        // device.cmd_draw_indexed_indirect(
+        //     cmd,
+        //     state.draw_indirect_buffer.buffer,
+        //     0,
+        //     renderables_count as u32,
+        //     std::mem::size_of::<vk::DrawIndexedIndirectCommand>() as u32,
+        // );
         device.cmd_end_query(cmd, frame_data.pipeline_query, 0);
 
         device.cmd_end_rendering(cmd);

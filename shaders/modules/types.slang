@@ -28,3 +28,9 @@ public struct DrawIndirect {
   public int vertex_offset;
   public uint first_instance;
 }
+
+public struct Dispatch {
+    public uint x;
+    public uint y;
+    public uint z;
+}
