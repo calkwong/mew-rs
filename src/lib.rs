@@ -66,6 +66,8 @@ impl Engine {
         let entry = Entry::linked();
 
         let window = window.unwrap();
+        window.set_cursor_grab(winit::window::CursorGrabMode::Confined).unwrap();
+        window.set_cursor_visible(false);
 
         let window_handle = window
             .window_handle()
