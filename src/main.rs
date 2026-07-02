@@ -13,6 +13,7 @@ use winit::{
 };
 
 const FRAMES_IN_FLIGHT: usize = 2;
+const QUERY_COUNT: u32 = 10;
 
 struct State {
     window: Window,
@@ -115,6 +116,18 @@ impl State {
                 .map(|_| device.create_semaphore(&semaphore_info, None).unwrap())
                 .collect()
         };
+
+        let query_info = vk::QueryPoolCreateInfo::default()
+            .query_type(vk::QueryType::PIPELINE_STATISTICS)
+            .query_count(QUERY_COUNT)
+            .pipeline_statistics(vk::QueryPipelineStatisticFlags::CLIPPING_INVOCATIONS);
+
+        unsafe {
+            (0..FRAMES_IN_FLIGHT).for_each(|i| {
+                frame_data[i].pipeline_query =
+                    device.create_query_pool(&query_info, None).unwrap();
+            });
+        }
 
         // Init descriptors
         let pool_size = [
@@ -418,10 +431,12 @@ impl Drop for State {
         let device = &self.engine.device;
 
         unsafe {
+            // TODO: drop?
             self.frame_data.iter().for_each(|data| {
                 device.destroy_command_pool(data.command_pool, None);
                 device.destroy_fence(data.fence, None);
                 device.destroy_semaphore(data.image_acquired_semaphore, None);
+                device.destroy_query_pool(data.pipeline_query, None);
             });
 
             self.render_done_semaphores.iter().for_each(|semaphore| {

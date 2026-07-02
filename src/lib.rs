@@ -15,9 +15,9 @@ use winit::{
     window::Window,
 };
 
+pub mod camera;
 pub mod descriptors;
 pub mod loader;
-pub mod camera;
 
 #[derive(Default, Copy, Clone)]
 pub struct FrameData {
@@ -25,6 +25,7 @@ pub struct FrameData {
     pub command_buffer: vk::CommandBuffer,
     pub fence: vk::Fence,
     pub image_acquired_semaphore: vk::Semaphore,
+    pub pipeline_query: vk::QueryPool,
 }
 
 pub struct Swapchain {
@@ -74,7 +75,9 @@ impl Engine {
         let entry = Entry::linked();
 
         let window = window.unwrap();
-        window.set_cursor_grab(winit::window::CursorGrabMode::Confined).unwrap();
+        window
+            .set_cursor_grab(winit::window::CursorGrabMode::Confined)
+            .unwrap();
         window.set_cursor_visible(false);
 
         let window_handle = window
@@ -220,7 +223,9 @@ impl Engine {
         assert!(enabled_vulkan_1_3_features.synchronization2 > 0);
         assert!(enabled_vulkan_1_3_features.dynamic_rendering > 0);
 
-        let vulkan_1_0_features = vk::PhysicalDeviceFeatures::default().multi_draw_indirect(true);
+        let vulkan_1_0_features = vk::PhysicalDeviceFeatures::default()
+            .multi_draw_indirect(true)
+            .pipeline_statistics_query(true);
         let mut vulkan_1_1_features =
             vk::PhysicalDeviceVulkan11Features::default().shader_draw_parameters(true);
         let mut vulkan_1_2_features = vk::PhysicalDeviceVulkan12Features::default()
@@ -370,9 +375,7 @@ impl Engine {
                 views: swapchain_image_views,
                 dirty: false,
             },
-            deletion_stack: DeletionStack {
-                stack: Vec::new(),
-            },
+            deletion_stack: DeletionStack { stack: Vec::new() },
             debug_utils_loader,
             debug_callback,
             properties: properties.properties,
@@ -484,9 +487,9 @@ pub fn create_graphics_pipeline(
     shader_stages: &[vk::ShaderStageFlags],
     format: vk::Format,
 ) -> vk::Pipeline {
-
-    let shader_stage_info: Vec<vk::PipelineShaderStageCreateInfo> = shader_stages.iter().map(|stage|{
-        match *stage {
+    let shader_stage_info: Vec<vk::PipelineShaderStageCreateInfo> = shader_stages
+        .iter()
+        .map(|stage| match *stage {
             vk::ShaderStageFlags::VERTEX => vk::PipelineShaderStageCreateInfo::default()
                 .name(c"vs_main")
                 .module(module)
@@ -496,8 +499,8 @@ pub fn create_graphics_pipeline(
                 .module(module)
                 .stage(vk::ShaderStageFlags::FRAGMENT),
             _ => panic!("Unsupported shader stage"),
-        }
-    }).collect();
+        })
+        .collect();
 
     let formats = [format];
     let mut rendering_create_info = vk::PipelineRenderingCreateInfo::default()
