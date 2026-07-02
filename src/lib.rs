@@ -220,6 +220,7 @@ impl Engine {
         assert!(enabled_vulkan_1_2_features.draw_indirect_count > 0);
         assert!(enabled_vulkan_1_2_features.scalar_block_layout > 0);
         assert!(enabled_vulkan_1_2_features.runtime_descriptor_array > 0);
+        assert!(enabled_vulkan_1_2_features.host_query_reset > 0);
         assert!(enabled_vulkan_1_3_features.synchronization2 > 0);
         assert!(enabled_vulkan_1_3_features.dynamic_rendering > 0);
 
@@ -234,7 +235,8 @@ impl Engine {
             .descriptor_binding_variable_descriptor_count(true)
             .runtime_descriptor_array(true)
             .draw_indirect_count(true)
-            .scalar_block_layout(true);
+            .scalar_block_layout(true)
+            .host_query_reset(true);
         let mut vulkan_1_3_features = vk::PhysicalDeviceVulkan13Features::default()
             .synchronization2(true)
             .dynamic_rendering(true);

@@ -65,7 +65,8 @@ impl State {
         );
 
         // frame data
-        let mut frame_data: [FrameData; FRAMES_IN_FLIGHT] = [FrameData::default(); FRAMES_IN_FLIGHT];
+        let mut frame_data: [FrameData; FRAMES_IN_FLIGHT] =
+            [FrameData::default(); FRAMES_IN_FLIGHT];
 
         let command_pool_info =
             vk::CommandPoolCreateInfo::default().queue_family_index(engine.queue_family_index);
@@ -124,8 +125,7 @@ impl State {
 
         unsafe {
             (0..FRAMES_IN_FLIGHT).for_each(|i| {
-                frame_data[i].pipeline_query =
-                    device.create_query_pool(&query_info, None).unwrap();
+                frame_data[i].pipeline_query = device.create_query_pool(&query_info, None).unwrap();
             });
         }
 
@@ -646,10 +646,7 @@ fn render_loop(state: &mut State) {
         device.wait_for_fences(&[fence], true, u64::MAX).unwrap();
 
         device
-            .reset_command_pool(
-                frame_data.command_pool,
-                vk::CommandPoolResetFlags::empty(),
-            )
+            .reset_command_pool(frame_data.command_pool, vk::CommandPoolResetFlags::empty())
             .unwrap();
     }
 
@@ -709,6 +706,11 @@ fn render_loop(state: &mut State) {
         }
         device.reset_fences(&[fence]).unwrap();
     }
+
+    unsafe {
+        device.reset_query_pool(frame_data.pipeline_query, 0, QUERY_COUNT);
+    }
+
     let mut image_memory_barrier = vk::ImageMemoryBarrier2::default()
         .image(state.engine.swapchain.images[swapchain_idx])
         .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
@@ -851,6 +853,12 @@ fn render_loop(state: &mut State) {
 
         device.cmd_bind_index_buffer(cmd, state.index_buffer.buffer, 0, vk::IndexType::UINT32);
 
+        device.cmd_begin_query(
+            cmd,
+            frame_data.pipeline_query,
+            0,
+            vk::QueryControlFlags::empty(),
+        );
         device.cmd_draw_indexed_indirect(
             cmd,
             state.draw_indirect_buffer.buffer,
@@ -858,6 +866,7 @@ fn render_loop(state: &mut State) {
             renderables_count as u32,
             std::mem::size_of::<vk::DrawIndexedIndirectCommand>() as u32,
         );
+        device.cmd_end_query(cmd, frame_data.pipeline_query, 0);
 
         device.cmd_end_rendering(cmd);
     };
