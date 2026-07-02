@@ -1,4 +1,4 @@
-use glam::{Vec3, Mat4};
+use glam::{Mat4, Vec3};
 
 pub struct Scene {
     pub vertices: Vec<Vertex>,
@@ -35,6 +35,8 @@ pub struct Mesh {
     pub vertex_offset: u32,
     pub first_index: u32,
     pub index_count: u32,
+    pub radius: f32,
+    pub center: Vec3,
 }
 
 pub struct Vertex {
@@ -81,9 +83,8 @@ fn get_indices(
 fn get_positions(
     gltf: &goth_gltf::Gltf<goth_gltf::default_extensions::Extensions>,
     buffer_data: &[u8],
-    out_buffer: &mut Vec<Vec3>,
     accessor_index: usize,
-) {
+) -> Vec<Vec3> {
     let accessor = &gltf.accessors[accessor_index];
     let buffer_view = &gltf.buffer_views[accessor.buffer_view.unwrap()];
 
@@ -97,23 +98,25 @@ fn get_positions(
     assert_eq!(byte_size, 4);
     let byte_stride = buffer_view.byte_stride.unwrap_or(byte_size * 3);
 
-    out_buffer.extend((0..count).map(|i| {
-        let vertex_offset = start + i * byte_stride;
+    (0..count)
+        .map(|i| {
+            let vertex_offset = start + i * byte_stride;
 
-        let get = |k: usize| {
-            f32::from_le_bytes(
-                buffer_data[vertex_offset + byte_size * k..vertex_offset + byte_size * (k + 1)]
-                    .try_into()
-                    .unwrap(),
-            )
-        };
+            let get = |k: usize| {
+                f32::from_le_bytes(
+                    buffer_data[vertex_offset + byte_size * k..vertex_offset + byte_size * (k + 1)]
+                        .try_into()
+                        .unwrap(),
+                )
+            };
 
-        let x = get(0);
-        let y = get(1);
-        let z = get(2);
+            let x = get(0);
+            let y = get(1);
+            let z = get(2);
 
-        Vec3 { x, y, z }
-    }))
+            Vec3 { x, y, z }
+        })
+        .collect()
 }
 
 // TODO: turn into get_Vec3 instead?
@@ -193,22 +196,34 @@ pub fn load_gltf(path: &str) -> Scene {
             let indices_idx = primitive.indices.unwrap();
             let first_index = indices.len() as u32;
             let index_count = get_indices(&gltf, buffer_data, &mut indices, indices_idx);
-            // indices.iter().for_each(|index| println!("{index}"));
 
             // For global combined index buffer
             meshes.push(Mesh {
                 vertex_offset: positions.len() as u32,
                 first_index,
                 index_count,
+                radius: 0.0,
+                center: Vec3::default(),
             });
 
             let positions_idx = primitive.attributes.position.unwrap();
-            get_positions(&gltf, buffer_data, &mut positions, positions_idx);
-            // positions.iter().for_each(|pos| println!("{}", pos));
+            let new_positions = get_positions(&gltf, buffer_data, positions_idx);
+
+            // TODO: untested
+            let mut center = Vec3::default();
+            new_positions.iter().for_each(|p| {
+                center += p;
+            });
+            center /= new_positions.len() as f32;
+            let mut radius: f32 = 0.0;
+            new_positions.iter().for_each(|p| {
+                radius = p.distance(center).max(radius);
+            });
+
+            positions.extend(new_positions);
 
             let normal_idx = primitive.attributes.normal.unwrap();
             get_normals(&gltf, buffer_data, &mut normals, normal_idx);
-            // normals.iter().for_each(|normal| println!("{}", normal));
 
             assert_eq!(positions.len(), normals.len());
         }
@@ -261,7 +276,6 @@ pub fn load_gltf(path: &str) -> Scene {
             let translation = glam::vec3(translation[0], translation[1], translation[2]);
 
             Mat4::from_scale_rotation_translation(scale, rotation, translation)
-
         };
 
         node_transforms.push(NodeTransform {

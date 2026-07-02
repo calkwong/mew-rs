@@ -10,6 +10,8 @@ public struct Mesh {
   public uint vertex_offset;
   public uint first_index;
   public uint index_count;
+  public float radius;
+  public float3 center;
 }
 
 public struct Vertex {
