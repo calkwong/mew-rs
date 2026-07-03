@@ -9,7 +9,13 @@ use ash::{
 use ash_window;
 use gpu_allocator::MemoryLocation;
 use gpu_allocator::vulkan::*;
-use std::{borrow::Cow, ffi, mem::ManuallyDrop, os::raw::c_char};
+use std::{
+    borrow::Cow,
+    ffi,
+    mem::ManuallyDrop,
+    os::raw::c_char,
+    sync::{Arc, RwLock},
+};
 use winit::{
     raw_window_handle::{HasDisplayHandle, HasWindowHandle},
     window::Window,
@@ -62,7 +68,7 @@ pub struct Engine {
     pub device: Device,
     pub queue_family_index: u32,
     pub graphics_queue: Queue,
-    pub allocator: ManuallyDrop<Allocator>,
+    pub allocator: ManuallyDrop<Arc<RwLock<Allocator>>>,
     pub swapchain: Swapchain,
     pub deletion_stack: DeletionStack,
     pub debug_utils_loader: debug_utils::Instance,
@@ -369,7 +375,7 @@ impl Engine {
             device,
             queue_family_index,
             graphics_queue,
-            allocator: ManuallyDrop::new(allocator),
+            allocator: ManuallyDrop::new(Arc::new(RwLock::new(allocator))),
             swapchain: Swapchain {
                 loader: swapchain_loader,
                 swapchain: swapchain,

@@ -52,9 +52,12 @@ impl State {
 
         let device = &engine.device;
 
+        let allocator = (*engine.allocator).clone();
+        let mut allocator = &mut allocator.write().unwrap();
+
         let draw_image = mew::create_image(
             &device,
-            &mut engine.allocator,
+            &mut allocator,
             engine.swapchain.extent,
             vk::Format::R16G16B16A16_SFLOAT,
             vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_SRC,
@@ -64,7 +67,7 @@ impl State {
 
         let depth_image = mew::create_image(
             &device,
-            &mut engine.allocator,
+            &mut allocator,
             engine.swapchain.extent,
             vk::Format::D32_SFLOAT,
             vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
@@ -329,7 +332,7 @@ impl State {
             frame_data[0].fence,
             frame_data[0].command_pool,
             frame_data[0].command_buffer,
-            &mut engine.allocator,
+            &mut allocator,
             gpu_allocator::MemoryLocation::GpuOnly,
             vk::BufferUsageFlags::STORAGE_BUFFER
                 | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
@@ -348,7 +351,7 @@ impl State {
             frame_data[0].fence,
             frame_data[0].command_pool,
             frame_data[0].command_buffer,
-            &mut engine.allocator,
+            &mut allocator,
             gpu_allocator::MemoryLocation::GpuOnly,
             vk::BufferUsageFlags::STORAGE_BUFFER
                 | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
@@ -367,7 +370,7 @@ impl State {
             frame_data[0].fence,
             frame_data[0].command_pool,
             frame_data[0].command_buffer,
-            &mut engine.allocator,
+            &mut allocator,
             gpu_allocator::MemoryLocation::GpuOnly,
             vk::BufferUsageFlags::STORAGE_BUFFER
                 | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
@@ -386,7 +389,7 @@ impl State {
             frame_data[0].fence,
             frame_data[0].command_pool,
             frame_data[0].command_buffer,
-            &mut engine.allocator,
+            &mut allocator,
             gpu_allocator::MemoryLocation::GpuOnly,
             vk::BufferUsageFlags::STORAGE_BUFFER
                 | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
@@ -397,7 +400,7 @@ impl State {
 
         let draw_indirect_buffer = mew::create_buffer(
             device,
-            &mut engine.allocator,
+            &mut allocator,
             gpu_allocator::MemoryLocation::GpuOnly,
             vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
                 | vk::BufferUsageFlags::STORAGE_BUFFER
@@ -408,7 +411,7 @@ impl State {
 
         let dispatch_buffer = mew::create_buffer(
             device,
-            &mut engine.allocator,
+            &mut allocator,
             gpu_allocator::MemoryLocation::GpuOnly,
             vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
                 | vk::BufferUsageFlags::STORAGE_BUFFER
@@ -460,22 +463,24 @@ impl Drop for State {
                 device.destroy_semaphore(*semaphore, None);
             });
 
+            let mut allocator = self.engine.allocator.write().unwrap();
+
             // clean up allocator + resources
             // TODO: consider drop or ManuallyDrop image?
-            mew::destroy_image(device, &mut self.engine.allocator, &mut self.draw_image);
-            mew::destroy_image(device, &mut self.engine.allocator, &mut self.depth_image);
-            mew::destroy_buffer(device, &mut self.engine.allocator, &mut self.vertex_buffer);
-            mew::destroy_buffer(device, &mut self.engine.allocator, &mut self.index_buffer);
-            mew::destroy_buffer(device, &mut self.engine.allocator, &mut self.object_buffer);
-            mew::destroy_buffer(device, &mut self.engine.allocator, &mut self.mesh_buffer);
+            mew::destroy_image(device, &mut allocator, &mut self.draw_image);
+            mew::destroy_image(device, &mut allocator, &mut self.depth_image);
+            mew::destroy_buffer(device, &mut allocator, &mut self.vertex_buffer);
+            mew::destroy_buffer(device, &mut allocator, &mut self.index_buffer);
+            mew::destroy_buffer(device, &mut allocator, &mut self.object_buffer);
+            mew::destroy_buffer(device, &mut allocator, &mut self.mesh_buffer);
             mew::destroy_buffer(
                 device,
-                &mut self.engine.allocator,
+                &mut allocator,
                 &mut self.draw_indirect_buffer,
             );
             mew::destroy_buffer(
                 device,
-                &mut self.engine.allocator,
+                &mut allocator,
                 &mut self.dispatch_buffer,
             );
 
@@ -1060,14 +1065,16 @@ fn render_loop(state: &mut State) {
 fn recreate_resources_on_swapchain_resize(state: &mut State) {
     let device = &state.engine.device;
 
+    let mut allocator = state.engine.allocator.write().unwrap();
+
     // destroy outdated resources
-    mew::destroy_image(device, &mut state.engine.allocator, &mut state.draw_image);
-    mew::destroy_image(device, &mut state.engine.allocator, &mut state.depth_image);
+    mew::destroy_image(device, &mut allocator, &mut state.draw_image);
+    mew::destroy_image(device, &mut allocator, &mut state.depth_image);
 
     // update resources
     state.draw_image = mew::create_image(
         &device,
-        &mut state.engine.allocator,
+        &mut allocator,
         state.engine.swapchain.extent,
         vk::Format::R16G16B16A16_SFLOAT,
         vk::ImageUsageFlags::STORAGE
@@ -1079,7 +1086,7 @@ fn recreate_resources_on_swapchain_resize(state: &mut State) {
 
     state.depth_image = mew::create_image(
         &device,
-        &mut state.engine.allocator,
+        &mut allocator,
         state.engine.swapchain.extent,
         vk::Format::D32_SFLOAT,
         vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
