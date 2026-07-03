@@ -23,6 +23,7 @@ use winit::{
 
 pub mod camera;
 pub mod descriptors;
+pub mod egui_renderer;
 pub mod loader;
 
 #[derive(Default, Copy, Clone)]
@@ -600,6 +601,21 @@ pub fn push_constants<T>(
 
 pub fn get_group_count(size: u32, threads: u32) -> u32 {
     (size + threads - 1) / threads
+}
+
+pub fn image_giga_barrier(device: &Device, cmd: vk::CommandBuffer, image: vk::Image) {
+    let image_memory_barrier = [vk::ImageMemoryBarrier2::default()
+        .image(image)
+        .old_layout(vk::ImageLayout::UNDEFINED)
+        .new_layout(vk::ImageLayout::GENERAL)
+        .src_stage_mask(vk::PipelineStageFlags2::ALL_GRAPHICS)
+        .src_access_mask(vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE)
+        .dst_stage_mask(vk::PipelineStageFlags2::ALL_GRAPHICS)
+        .dst_access_mask(vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE)
+        .subresource_range(image_subresource_range(vk::ImageAspectFlags::COLOR))];
+
+    let dependency_info = vk::DependencyInfo::default().image_memory_barriers(&image_memory_barrier);
+    unsafe { device.cmd_pipeline_barrier2(cmd, &dependency_info) };
 }
 
 pub fn giga_barrier(device: &Device, cmd: vk::CommandBuffer) {
