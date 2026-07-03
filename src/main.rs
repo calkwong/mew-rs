@@ -53,7 +53,7 @@ impl State {
         let device = &engine.device;
 
         let allocator = (*engine.allocator).clone();
-        let mut allocator = &mut allocator.write().unwrap();
+        let mut allocator = &mut allocator.lock().unwrap();
 
         let draw_image = mew::create_image(
             &device,
@@ -463,7 +463,7 @@ impl Drop for State {
                 device.destroy_semaphore(*semaphore, None);
             });
 
-            let mut allocator = self.engine.allocator.write().unwrap();
+            let mut allocator = self.engine.allocator.lock().unwrap();
 
             // clean up allocator + resources
             // TODO: consider drop or ManuallyDrop image?
@@ -1065,7 +1065,7 @@ fn render_loop(state: &mut State) {
 fn recreate_resources_on_swapchain_resize(state: &mut State) {
     let device = &state.engine.device;
 
-    let mut allocator = state.engine.allocator.write().unwrap();
+    let mut allocator = state.engine.allocator.lock().unwrap();
 
     // destroy outdated resources
     mew::destroy_image(device, &mut allocator, &mut state.draw_image);

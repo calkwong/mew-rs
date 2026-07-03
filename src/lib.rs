@@ -14,7 +14,7 @@ use std::{
     ffi,
     mem::ManuallyDrop,
     os::raw::c_char,
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex},
 };
 use winit::{
     raw_window_handle::{HasDisplayHandle, HasWindowHandle},
@@ -23,7 +23,6 @@ use winit::{
 
 pub mod camera;
 pub mod descriptors;
-pub mod egui_renderer;
 pub mod loader;
 
 #[derive(Default, Copy, Clone)]
@@ -69,7 +68,7 @@ pub struct Engine {
     pub device: Device,
     pub queue_family_index: u32,
     pub graphics_queue: Queue,
-    pub allocator: ManuallyDrop<Arc<RwLock<Allocator>>>,
+    pub allocator: ManuallyDrop<Arc<Mutex<Allocator>>>,
     pub swapchain: Swapchain,
     pub deletion_stack: DeletionStack,
     pub debug_utils_loader: debug_utils::Instance,
@@ -376,7 +375,7 @@ impl Engine {
             device,
             queue_family_index,
             graphics_queue,
-            allocator: ManuallyDrop::new(Arc::new(RwLock::new(allocator))),
+            allocator: ManuallyDrop::new(Arc::new(Mutex::new(allocator))),
             swapchain: Swapchain {
                 loader: swapchain_loader,
                 swapchain: swapchain,
