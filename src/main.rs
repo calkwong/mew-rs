@@ -14,7 +14,6 @@ use winit::{
     window::{Window, WindowId},
 };
 
-const FRAMES_IN_FLIGHT: usize = 2;
 const MAX_QUERY_COUNT: u32 = 10;
 const CURRENT_QUERIES: u32 = 1;
 const MAX_PUSH_CONSTANTS_SIZE: u32 = 256;
@@ -26,7 +25,7 @@ struct State {
     engine: mew::Engine,
     draw_image: mew::Image,
     depth_image: mew::Image,
-    frame_data: [mew::FrameData; FRAMES_IN_FLIGHT],
+    frame_data: [mew::FrameData; mew::FRAMES_IN_FLIGHT],
     render_done_semaphores: Vec<Semaphore>,
     frame_index: usize,
     copy_pipeline: vk::Pipeline,
@@ -76,14 +75,14 @@ impl State {
         );
 
         // Prepare frame data
-        let mut frame_data: [FrameData; FRAMES_IN_FLIGHT] =
-            [FrameData::default(); FRAMES_IN_FLIGHT];
+        let mut frame_data: [FrameData; mew::FRAMES_IN_FLIGHT] =
+            [FrameData::default(); mew::FRAMES_IN_FLIGHT];
 
         let command_pool_info =
             vk::CommandPoolCreateInfo::default().queue_family_index(engine.queue_family_index);
 
         unsafe {
-            (0..FRAMES_IN_FLIGHT).for_each(|i| {
+            (0..mew::FRAMES_IN_FLIGHT).for_each(|i| {
                 frame_data[i].command_pool = device
                     .create_command_pool(&command_pool_info, None)
                     .unwrap();
@@ -91,7 +90,7 @@ impl State {
         }
 
         unsafe {
-            (0..FRAMES_IN_FLIGHT).for_each(|i| {
+            (0..mew::FRAMES_IN_FLIGHT).for_each(|i| {
                 let pool = &frame_data[i].command_pool;
 
                 let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::default()
@@ -109,7 +108,7 @@ impl State {
         let fence_info = vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
 
         unsafe {
-            (0..FRAMES_IN_FLIGHT).for_each(|i| {
+            (0..mew::FRAMES_IN_FLIGHT).for_each(|i| {
                 frame_data[i].fence = device.create_fence(&fence_info, None).unwrap();
             });
         }
@@ -117,7 +116,7 @@ impl State {
         let semaphore_info = vk::SemaphoreCreateInfo::default();
 
         unsafe {
-            (0..FRAMES_IN_FLIGHT).for_each(|i| {
+            (0..mew::FRAMES_IN_FLIGHT).for_each(|i| {
                 frame_data[i].image_acquired_semaphore =
                     device.create_semaphore(&semaphore_info, None).unwrap()
             });
@@ -135,7 +134,7 @@ impl State {
             .pipeline_statistics(vk::QueryPipelineStatisticFlags::CLIPPING_INVOCATIONS);
 
         unsafe {
-            (0..FRAMES_IN_FLIGHT).for_each(|i| {
+            (0..mew::FRAMES_IN_FLIGHT).for_each(|i| {
                 frame_data[i].pipeline_query = device.create_query_pool(&query_info, None).unwrap();
             });
         }
@@ -166,7 +165,7 @@ impl State {
         let descriptor_pool = mew::descriptors::create_descriptor_pool(&device, &pool_size);
         let buffer_binding = vk::DescriptorSetLayoutBinding::default()
             .binding(0)
-            .descriptor_count(FRAMES_IN_FLIGHT as u32)
+            .descriptor_count(mew::FRAMES_IN_FLIGHT as u32)
             .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
             .stage_flags(vk::ShaderStageFlags::ALL);
 
@@ -655,7 +654,7 @@ impl ApplicationHandler for App {
 
 fn render_loop(state: &mut State) {
     let device = &state.engine.device;
-    let current_index = state.frame_index % FRAMES_IN_FLIGHT;
+    let current_index = state.frame_index % mew::FRAMES_IN_FLIGHT;
 
     let aspect = (state.engine.swapchain.extent.width as f32)
         / (state.engine.swapchain.extent.height as f32);
@@ -738,7 +737,7 @@ fn render_loop(state: &mut State) {
             });
     }
 
-    if state.frame_index >= FRAMES_IN_FLIGHT {
+    if state.frame_index >= mew::FRAMES_IN_FLIGHT {
         let mut pipeline_query_results = [0u64; CURRENT_QUERIES as usize];
         unsafe {
             device

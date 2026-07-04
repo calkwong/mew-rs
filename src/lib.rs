@@ -25,6 +25,8 @@ pub mod camera;
 pub mod descriptors;
 pub mod loader;
 
+pub const FRAMES_IN_FLIGHT: usize = 2;
+
 #[derive(Default, Copy, Clone)]
 pub struct FrameData {
     pub command_pool: vk::CommandPool,
