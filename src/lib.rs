@@ -615,7 +615,8 @@ pub fn image_giga_barrier(device: &Device, cmd: vk::CommandBuffer, image: vk::Im
         .dst_access_mask(vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE)
         .subresource_range(image_subresource_range(vk::ImageAspectFlags::COLOR))];
 
-    let dependency_info = vk::DependencyInfo::default().image_memory_barriers(&image_memory_barrier);
+    let dependency_info =
+        vk::DependencyInfo::default().image_memory_barriers(&image_memory_barrier);
     unsafe { device.cmd_pipeline_barrier2(cmd, &dependency_info) };
 }
 
@@ -669,16 +670,13 @@ pub fn create_buffer(
 pub fn create_buffer_with_data(
     device: &Device,
     queue: Queue,
-    fence: vk::Fence,
     pool: vk::CommandPool,
     cmd: vk::CommandBuffer,
     allocator: &mut Allocator,
-    memory_location: gpu_allocator::MemoryLocation,
     flags: vk::BufferUsageFlags,
     size: u64,
     data: &[u8],
 ) -> Buffer {
-    // Create staging buffer
     let mut staging_buffer = create_buffer(
         device,
         allocator,
@@ -689,33 +687,7 @@ pub fn create_buffer_with_data(
     let ptr = staging_buffer.allocation.mapped_ptr().unwrap().as_ptr() as *mut u8;
     unsafe { ptr.copy_from(data.as_ptr(), data.len()) };
 
-    // Create GPU buffer
-    let buffer_info = vk::BufferCreateInfo::default().usage(flags).size(size);
-    let buffer = unsafe { device.create_buffer(&buffer_info, None).unwrap() };
-
-    let requirements = unsafe { device.get_buffer_memory_requirements(buffer) };
-
-    let allocation = allocator
-        .allocate(&AllocationCreateDesc {
-            name: "Buffer allocation",
-            requirements,
-            location: memory_location,
-            linear: false,
-            allocation_scheme: AllocationScheme::GpuAllocatorManaged,
-        })
-        .unwrap();
-
-    unsafe {
-        device
-            .bind_buffer_memory(buffer, allocation.memory(), allocation.offset())
-            .unwrap()
-    };
-
-    // Copy
-    unsafe {
-        device.wait_for_fences(&[fence], true, u64::MAX).unwrap();
-        device.reset_fences(&[fence]).unwrap();
-    }
+    let buffer = create_buffer(device, allocator, MemoryLocation::GpuOnly, flags, size);
 
     unsafe {
         device
@@ -728,7 +700,7 @@ pub fn create_buffer_with_data(
 
     let copy_buffer_info = &vk::CopyBufferInfo2::default()
         .src_buffer(staging_buffer.buffer)
-        .dst_buffer(buffer)
+        .dst_buffer(buffer.buffer)
         .regions(&copy_region);
 
     unsafe { device.cmd_copy_buffer2(cmd, copy_buffer_info) }
@@ -737,18 +709,13 @@ pub fn create_buffer_with_data(
     let command_buffer_infos = [vk::CommandBufferSubmitInfo::default().command_buffer(cmd)];
     let submit_info = [vk::SubmitInfo2::default().command_buffer_infos(&command_buffer_infos)];
 
-    unsafe { device.queue_submit2(queue, &submit_info, fence).unwrap() }
+    unsafe { device.queue_submit2(queue, &submit_info, vk::Fence::null()).unwrap() }
 
     unsafe { device.device_wait_idle().unwrap() }
 
     destroy_buffer(device, allocator, &mut staging_buffer);
 
-    Buffer {
-        buffer,
-        address: get_buffer_address(device, buffer),
-        allocation,
-        size,
-    }
+    buffer
 }
 
 pub fn destroy_buffer(device: &Device, allocator: &mut Allocator, buffer: &mut Buffer) {

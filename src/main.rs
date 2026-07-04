@@ -328,11 +328,9 @@ impl State {
         let vertex_buffer = mew::create_buffer_with_data(
             device,
             engine.graphics_queue,
-            frame_data[0].fence,
             frame_data[0].command_pool,
             frame_data[0].command_buffer,
             &mut allocator,
-            gpu_allocator::MemoryLocation::GpuOnly,
             vk::BufferUsageFlags::STORAGE_BUFFER
                 | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
                 | vk::BufferUsageFlags::TRANSFER_DST,
@@ -347,11 +345,9 @@ impl State {
         let index_buffer = mew::create_buffer_with_data(
             device,
             engine.graphics_queue,
-            frame_data[0].fence,
             frame_data[0].command_pool,
             frame_data[0].command_buffer,
             &mut allocator,
-            gpu_allocator::MemoryLocation::GpuOnly,
             vk::BufferUsageFlags::STORAGE_BUFFER
                 | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
                 | vk::BufferUsageFlags::TRANSFER_DST
@@ -366,11 +362,9 @@ impl State {
         let mesh_buffer = mew::create_buffer_with_data(
             device,
             engine.graphics_queue,
-            frame_data[0].fence,
             frame_data[0].command_pool,
             frame_data[0].command_buffer,
             &mut allocator,
-            gpu_allocator::MemoryLocation::GpuOnly,
             vk::BufferUsageFlags::STORAGE_BUFFER
                 | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
                 | vk::BufferUsageFlags::TRANSFER_DST,
@@ -385,11 +379,9 @@ impl State {
         let object_buffer = mew::create_buffer_with_data(
             device,
             engine.graphics_queue,
-            frame_data[0].fence,
             frame_data[0].command_pool,
             frame_data[0].command_buffer,
             &mut allocator,
-            gpu_allocator::MemoryLocation::GpuOnly,
             vk::BufferUsageFlags::STORAGE_BUFFER
                 | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
                 | vk::BufferUsageFlags::TRANSFER_DST,
