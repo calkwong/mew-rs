@@ -23,6 +23,7 @@ use winit::{
 
 pub mod camera;
 pub mod descriptors;
+// pub mod imgui_backend;
 pub mod loader;
 
 pub const FRAMES_IN_FLIGHT: usize = 2;
@@ -709,13 +710,100 @@ pub fn create_buffer_with_data(
     let command_buffer_infos = [vk::CommandBufferSubmitInfo::default().command_buffer(cmd)];
     let submit_info = [vk::SubmitInfo2::default().command_buffer_infos(&command_buffer_infos)];
 
-    unsafe { device.queue_submit2(queue, &submit_info, vk::Fence::null()).unwrap() }
+    unsafe {
+        device
+            .queue_submit2(queue, &submit_info, vk::Fence::null())
+            .unwrap()
+    }
 
     unsafe { device.device_wait_idle().unwrap() }
 
     destroy_buffer(device, allocator, &mut staging_buffer);
 
     buffer
+}
+
+pub fn create_image_with_data(
+    device: &Device,
+    queue: Queue,
+    pool: vk::CommandPool,
+    cmd: vk::CommandBuffer,
+    allocator: &mut Allocator,
+    extent: vk::Extent2D,
+    format: vk::Format,
+    usage: vk::ImageUsageFlags,
+    aspect: vk::ImageAspectFlags,
+    _mip: bool,
+    size: u64,
+    data: &[u8],
+) -> Image {
+    let mut staging_buffer = create_buffer(
+        device,
+        allocator,
+        MemoryLocation::CpuToGpu,
+        vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
+        size,
+    );
+    let ptr = staging_buffer.allocation.mapped_ptr().unwrap().as_ptr() as *mut u8;
+    unsafe { ptr.copy_from(data.as_ptr(), data.len()) };
+
+    let image = create_image(device, allocator, extent, format, usage, aspect, _mip);
+
+    unsafe {
+        device
+            .reset_command_pool(pool, vk::CommandPoolResetFlags::empty())
+            .unwrap();
+    }
+
+    let cmd_begin_info = vk::CommandBufferBeginInfo::default();
+
+    unsafe {
+        device.begin_command_buffer(cmd, &cmd_begin_info).unwrap();
+    }
+
+    image_giga_barrier(&device, cmd, image.image);
+
+    let image_subresource = vk::ImageSubresourceLayers::default()
+        .aspect_mask(vk::ImageAspectFlags::COLOR)
+        .base_array_layer(0)
+        .layer_count(1)
+        .mip_level(0);
+
+    let buffer_image_copy = [vk::BufferImageCopy2::default()
+        .image_subresource(image_subresource)
+        .image_extent(vk::Extent3D {
+            width: extent.width,
+            height: extent.height,
+            depth: 1,
+        })];
+
+    let copy_buffer_to_image_info = vk::CopyBufferToImageInfo2::default()
+        .src_buffer(staging_buffer.buffer)
+        .dst_image(image.image)
+        .dst_image_layout(vk::ImageLayout::GENERAL)
+        .regions(&buffer_image_copy);
+
+    unsafe {
+        device.cmd_copy_buffer_to_image2(cmd, &copy_buffer_to_image_info);
+    }
+
+    let command_buffer_infos = [vk::CommandBufferSubmitInfo::default().command_buffer(cmd)];
+    let submit_info = [vk::SubmitInfo2::default().command_buffer_infos(&command_buffer_infos)];
+
+    unsafe {
+        device.end_command_buffer(cmd).unwrap();
+        device
+            .queue_submit2(queue, &submit_info, vk::Fence::null())
+            .unwrap()
+    }
+
+    unsafe {
+        device.device_wait_idle().unwrap();
+    }
+
+    destroy_buffer(&device, allocator, &mut staging_buffer);
+
+    image
 }
 
 pub fn destroy_buffer(device: &Device, allocator: &mut Allocator, buffer: &mut Buffer) {
