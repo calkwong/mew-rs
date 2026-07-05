@@ -3,8 +3,8 @@
 use ash::{
     Device, Entry, Instance,
     ext::debug_utils,
-    khr::{surface, swapchain},
-    vk::{self, DebugUtilsMessengerEXT, Queue, SwapchainKHR},
+    khr::surface,
+    vk::{self, DebugUtilsMessengerEXT, Queue},
 };
 use ash_window;
 use gpu_allocator::MemoryLocation;
@@ -22,11 +22,15 @@ use winit::{
 };
 
 pub mod camera;
+pub mod loader;
 
 pub mod descriptors;
 use descriptors::{RenderResourceTag, get_descriptor_index};
 
-pub mod loader;
+pub mod swapchain;
+use swapchain::Swapchain;
+
+use crate::swapchain::create_swapchain;
 
 pub const FRAMES_IN_FLIGHT: usize = 2;
 
@@ -37,16 +41,6 @@ pub struct FrameData {
     pub fence: vk::Fence,
     pub image_acquired_semaphore: vk::Semaphore,
     pub pipeline_query: vk::QueryPool,
-}
-
-pub struct Swapchain {
-    pub loader: swapchain::Device,
-    pub swapchain: SwapchainKHR,
-    pub format: vk::Format,
-    pub extent: vk::Extent2D,
-    pub images: Vec<vk::Image>,
-    pub views: Vec<vk::ImageView>,
-    pub dirty: bool,
 }
 
 pub struct Image {
@@ -212,7 +206,7 @@ impl Engine {
         queue_infos.push(queue_create_info);
 
         // check extension support
-        let device_extension_names_raw = [swapchain::NAME.as_ptr()];
+        let device_extension_names_raw = [ash::khr::swapchain::NAME.as_ptr()];
 
         // check feature support
         let mut enabled_vulkan_1_1_features = vk::PhysicalDeviceVulkan11Features::default();
@@ -286,86 +280,15 @@ impl Engine {
         })
         .unwrap();
 
-        let swapchain_loader = swapchain::Device::new(&instance, &device);
-
-        let swapchain_format = get_swapchain_format(&surface_loader, pdevice, surface);
-
-        let surface_capabilities = unsafe {
-            surface_loader
-                .get_physical_device_surface_capabilities(pdevice, surface)
-                .unwrap()
-        };
-
-        let mut desired_image_count = surface_capabilities.min_image_count + 1;
-        if surface_capabilities.max_image_count > 0
-            && desired_image_count > surface_capabilities.max_image_count
-        {
-            desired_image_count = surface_capabilities.max_image_count;
-        }
-
-        let window_size = window.inner_size();
-
-        let surface_resolution = match surface_capabilities.current_extent.width {
-            u32::MAX => vk::Extent2D {
-                width: window_size.width,
-                height: window_size.height,
-            },
-            _ => surface_capabilities.current_extent,
-        };
-        let pre_transform = if surface_capabilities
-            .supported_transforms
-            .contains(vk::SurfaceTransformFlagsKHR::IDENTITY)
-        {
-            vk::SurfaceTransformFlagsKHR::IDENTITY
-        } else {
-            surface_capabilities.current_transform
-        };
-
-        let present_mode = get_present_mode(&surface_loader, pdevice, surface);
-
-        let swapchain_create_info = vk::SwapchainCreateInfoKHR::default()
-            .surface(surface)
-            .min_image_count(desired_image_count)
-            .image_format(swapchain_format)
-            .image_extent(surface_resolution)
-            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::STORAGE)
-            .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
-            .pre_transform(pre_transform)
-            .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
-            .present_mode(present_mode)
-            .clipped(true)
-            .image_array_layers(1);
-
-        let swapchain = unsafe {
-            swapchain_loader
-                .create_swapchain(&swapchain_create_info, None)
-                .unwrap()
-        };
-
-        let swapchain_images = unsafe { swapchain_loader.get_swapchain_images(swapchain).unwrap() };
-        let swapchain_image_views: Vec<vk::ImageView> = swapchain_images
-            .iter()
-            .map(|image| {
-                let image_view_info = vk::ImageViewCreateInfo::default()
-                    .image(*image)
-                    .view_type(vk::ImageViewType::TYPE_2D)
-                    .format(swapchain_format)
-                    .components(vk::ComponentMapping {
-                        r: vk::ComponentSwizzle::R,
-                        g: vk::ComponentSwizzle::G,
-                        b: vk::ComponentSwizzle::B,
-                        a: vk::ComponentSwizzle::A,
-                    })
-                    .subresource_range(vk::ImageSubresourceRange {
-                        aspect_mask: vk::ImageAspectFlags::COLOR,
-                        base_mip_level: 0,
-                        level_count: 1,
-                        base_array_layer: 0,
-                        layer_count: 1,
-                    });
-                unsafe { device.create_image_view(&image_view_info, None).unwrap() }
-            })
-            .collect();
+        let swapchain = create_swapchain(
+            &instance,
+            &surface_loader,
+            surface,
+            pdevice,
+            &device,
+            &window,
+            vk::SwapchainKHR::null(),
+        );
 
         let mut properties = vk::PhysicalDeviceProperties2::default();
         unsafe {
@@ -474,30 +397,6 @@ impl Engine {
             sampler_descriptor,
         ];
 
-        // // TODO: create fn for write desc set
-        // let mut image_infos: Vec<vk::DescriptorImageInfo> =
-        //     Vec::from([vk::DescriptorImageInfo::default()
-        //         .image_layout(vk::ImageLayout::GENERAL)
-        //         .image_view(draw_image.view)]);
-        // engine.swapchain.views.iter().for_each(|image_view| {
-        //     image_infos.push(
-        //         vk::DescriptorImageInfo::default()
-        //             .image_layout(vk::ImageLayout::GENERAL)
-        //             .image_view(*image_view),
-        //     );
-        // });
-
-        // // Write to descriptors
-        // let storage_descriptor_write = vk::WriteDescriptorSet::default()
-        //     .dst_set(storage_descriptor)
-        //     .dst_binding(0)
-        //     .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
-        //     .image_info(&image_infos)
-        //     .descriptor_count(4);
-        // unsafe {
-        //     device.update_descriptor_sets(&[storage_descriptor_write], &[]);
-        // }
-
         let descriptor_layouts = [
             buffer_descriptor_layout,
             storage_descriptor_layout,
@@ -530,15 +429,7 @@ impl Engine {
             queue_family_index,
             graphics_queue,
             allocator: ManuallyDrop::new(Arc::new(Mutex::new(allocator))),
-            swapchain: Swapchain {
-                loader: swapchain_loader,
-                swapchain: swapchain,
-                format: swapchain_format,
-                extent: surface_resolution,
-                images: swapchain_images,
-                views: swapchain_image_views,
-                dirty: false,
-            },
+            swapchain,
             descriptor,
             pipeline_layout,
             debug_utils_loader,
@@ -1157,157 +1048,6 @@ pub fn load_shader(device: &Device, path: &str) -> vk::ShaderModule {
         ash::util::read_spv(&mut std::io::Cursor::new(&spv[..])).expect("Failed to read spv file");
     let create_info = vk::ShaderModuleCreateInfo::default().code(&code);
     unsafe { device.create_shader_module(&create_info, None).unwrap() }
-}
-
-pub fn get_swapchain_format(
-    surface_loader: &surface::Instance,
-    pdevice: vk::PhysicalDevice,
-    surface: vk::SurfaceKHR,
-) -> vk::Format {
-    let surface_formats = unsafe {
-        surface_loader
-            .get_physical_device_surface_formats(pdevice, surface)
-            .unwrap()
-    };
-
-    for formats in &surface_formats {
-        if formats.format == vk::Format::B8G8R8A8_UNORM
-        // if formats.format == vk::Format::B8G8R8A8_SRGB // this does not support STORAGE usage
-        {
-            return vk::Format::B8G8R8A8_UNORM;
-        }
-    }
-
-    surface_formats[0].format
-}
-
-pub fn get_present_mode(
-    surface_loader: &surface::Instance,
-    pdevice: vk::PhysicalDevice,
-    surface: vk::SurfaceKHR,
-) -> vk::PresentModeKHR {
-    let present_modes = unsafe {
-        surface_loader
-            .get_physical_device_surface_present_modes(pdevice, surface)
-            .unwrap()
-    };
-
-    present_modes
-        .iter()
-        .cloned()
-        .find(|&mode| mode == vk::PresentModeKHR::MAILBOX)
-        .unwrap_or(vk::PresentModeKHR::FIFO)
-}
-
-fn update_swapchain(engine: &mut Engine, new_extent: vk::Extent2D) {
-    let old_swapchain_handle = engine.swapchain.swapchain;
-
-    let surface_capabilities = unsafe {
-        engine
-            .surface_loader
-            .get_physical_device_surface_capabilities(engine.physical_device, engine.surface)
-            .unwrap()
-    };
-
-    let pre_transform = if surface_capabilities
-        .supported_transforms
-        .contains(vk::SurfaceTransformFlagsKHR::IDENTITY)
-    {
-        vk::SurfaceTransformFlagsKHR::IDENTITY
-    } else {
-        surface_capabilities.current_transform
-    };
-
-    let present_mode = get_present_mode(
-        &engine.surface_loader,
-        engine.physical_device,
-        engine.surface,
-    );
-
-    let mut desired_image_count = surface_capabilities.min_image_count + 1;
-    if surface_capabilities.max_image_count > 0
-        && desired_image_count > surface_capabilities.max_image_count
-    {
-        desired_image_count = surface_capabilities.max_image_count;
-    }
-
-    engine.swapchain.format = get_swapchain_format(
-        &engine.surface_loader,
-        engine.physical_device,
-        engine.surface,
-    );
-
-    // This check is necessary to avoid OOB validation error when falling back to x11
-    let surface_resolution = match surface_capabilities.current_extent.width {
-        u32::MAX => new_extent,
-        _ => surface_capabilities.current_extent,
-    };
-    engine.swapchain.extent = surface_resolution;
-
-    let swapchain_create_info = vk::SwapchainCreateInfoKHR::default()
-        .surface(engine.surface)
-        .min_image_count(desired_image_count)
-        .image_format(engine.swapchain.format)
-        .image_extent(engine.swapchain.extent)
-        .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::STORAGE)
-        .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
-        .pre_transform(pre_transform)
-        .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
-        .present_mode(present_mode)
-        .clipped(true)
-        .image_array_layers(1)
-        .old_swapchain(old_swapchain_handle);
-
-    unsafe {
-        engine.swapchain.swapchain = engine
-            .swapchain
-            .loader
-            .create_swapchain(&swapchain_create_info, None)
-            .unwrap();
-
-        engine
-            .swapchain
-            .loader
-            .destroy_swapchain(old_swapchain_handle, None);
-    }
-
-    engine.swapchain.images.clear();
-    engine.swapchain.images = unsafe {
-        engine
-            .swapchain
-            .loader
-            .get_swapchain_images(engine.swapchain.swapchain)
-            .unwrap()
-    };
-}
-
-pub fn recreate_swapchain(engine: &mut Engine, new_extent: vk::Extent2D) {
-    unsafe {
-        engine.device.device_wait_idle().unwrap();
-    }
-
-    update_swapchain(engine, new_extent);
-
-    let swapchain = &mut engine.swapchain;
-
-    swapchain.views.iter().for_each(|image_view| unsafe {
-        engine.device.destroy_image_view(*image_view, None);
-    });
-
-    swapchain.views.clear();
-    swapchain.views = swapchain
-        .images
-        .iter()
-        .map(|&image| {
-            create_image_view(
-                &engine.device,
-                image,
-                swapchain.format,
-                vk::ImageViewType::TYPE_2D,
-                image_subresource_range(vk::ImageAspectFlags::COLOR),
-            )
-        })
-        .collect();
 }
 
 fn get_buffer_address(device: &Device, buffer: vk::Buffer) -> vk::DeviceAddress {

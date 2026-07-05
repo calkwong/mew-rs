@@ -1,6 +1,7 @@
 use ash::vk::{self, Fence, Semaphore};
 use glam::Vec4Swizzles;
 use mew::descriptors::RenderResourceTag;
+use mew::swapchain::recreate_swapchain;
 use mew::{
     FrameData,
     camera::{Camera, Key, KeyState},
@@ -50,7 +51,6 @@ impl State {
     fn new(window: Option<Window>) -> Self {
         let engine = mew::Engine::new(window.as_ref());
 
-        // TODO: consider moving this closer to device creation?
         assert_eq!(
             engine.properties.limits.max_push_constants_size,
             MAX_PUSH_CONSTANTS_SIZE
@@ -319,8 +319,7 @@ impl Drop for State {
 
             let mut allocator = self.engine.allocator.lock().unwrap();
 
-            // clean up allocator + resources
-            // TODO: consider drop or ManuallyDrop image?
+            // Destroy resources
             mew::destroy_image(device, &mut allocator, &mut self.images.draw_image);
             mew::destroy_image(device, &mut allocator, &mut self.images.depth_image);
             mew::destroy_buffer(device, &mut allocator, &mut self.vertex_buffer);
@@ -395,15 +394,10 @@ impl ApplicationHandler for App {
             // This should be providing us with new dims, but it's returning outdated dims which can cause OOB surface extent - possibly Niri specific?
             winit::event::WindowEvent::Resized(_) => {
                 if let Some(state) = self.state.as_mut() {
-                    let window_size = state.window.inner_size();
-                    let new_extent = vk::Extent2D {
-                        width: window_size.width,
-                        height: window_size.height,
-                    };
-
-                    mew::recreate_swapchain(&mut state.engine, new_extent);
+                    recreate_swapchain(&mut state.engine, &state.window);
                     recreate_resources_on_swapchain_resize(state);
 
+                    let window_size = state.window.inner_size();
                     println!(
                         "Swapchain resize: {}x{}",
                         window_size.width, window_size.height
@@ -415,16 +409,14 @@ impl ApplicationHandler for App {
                     render_loop(state);
 
                     if state.engine.swapchain.dirty {
-                        let window_size = state.window.inner_size();
-
-                        let new_extent = vk::Extent2D {
-                            width: window_size.width as u32,
-                            height: window_size.height as u32,
-                        };
-
-                        mew::recreate_swapchain(&mut state.engine, new_extent);
+                        recreate_swapchain(&mut state.engine, &state.window);
                         recreate_resources_on_swapchain_resize(state);
-                        state.engine.swapchain.dirty = false;
+
+                        let window_size = state.window.inner_size();
+                        println!(
+                            "Swapchain resize: {}x{}",
+                            window_size.width, window_size.height
+                        );
                     }
                 }
             }
@@ -644,17 +636,16 @@ fn render_loop(state: &mut State) {
         vk::DependencyInfo::default().image_memory_barriers(&image_memory_barriers);
     unsafe { device.cmd_pipeline_barrier2(cmd, &dependency_info) };
 
-    // TODO: use in culling shader, or query for maxDrawCount if it xists?
     let renderables_count =
         state.object_buffer.size as usize / std::mem::size_of::<mew::loader::ObjectData>();
 
-    // Zero count buffer
+    // Pass 0 - Zero buffers
     unsafe {
         device.cmd_fill_buffer(cmd, state.dispatch_buffer.buffer, 0, vk::WHOLE_SIZE, 0);
     }
     giga_barrier(device, cmd);
 
-    // Frustum culling
+    // Pass 1 - Culling
     unsafe {
         device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, state.cull_pipeline);
 
@@ -710,7 +701,7 @@ fn render_loop(state: &mut State) {
 
     mew::giga_barrier(device, cmd);
 
-    // rasterize
+    // Pass 2 - Rasterization
     unsafe {
         device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, state.draw_pipeline);
 
@@ -798,14 +789,14 @@ fn render_loop(state: &mut State) {
             0,
             vk::QueryControlFlags::empty(),
         );
-        // TODO: query max draw count?
+
         device.cmd_draw_indexed_indirect_count(
             cmd,
             state.draw_indirect_buffer.buffer,
             0,
             state.dispatch_buffer.buffer,
             0,
-            renderables_count as u32,
+            renderables_count as u32, // There is a physical limit but for non-meshlets we are not concerned
             std::mem::size_of::<vk::DrawIndexedIndirectCommand>() as u32,
         );
         device.cmd_end_query(cmd, frame_data.pipeline_query, 0);
