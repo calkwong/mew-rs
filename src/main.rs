@@ -32,7 +32,9 @@ struct State {
     draw_pipeline: vk::Pipeline,
     cull_pipeline: vk::Pipeline,
     pipeline_layout: vk::PipelineLayout,
+    descriptor_pool: vk::DescriptorPool,
     descriptor_sets: [vk::DescriptorSet; 4],
+    descriptor_layouts: [vk::DescriptorSetLayout; 4],
     vertex_buffer: mew::Buffer,
     index_buffer: mew::Buffer,
     mesh_buffer: mew::Buffer,
@@ -43,7 +45,7 @@ struct State {
 
 impl State {
     fn new(window: Option<Window>) -> Self {
-        let mut engine = mew::Engine::new(window.as_ref());
+        let engine = mew::Engine::new(window.as_ref());
 
         assert_eq!(engine.properties.limits.max_push_constants_size, MAX_PUSH_CONSTANTS_SIZE);
 
@@ -265,7 +267,7 @@ impl State {
             device.update_descriptor_sets(&[storage_descriptor_write], &[]);
         }
 
-        let descriptor_set_layouts = [
+        let descriptor_layouts = [
             buffer_descriptor_layout,
             storage_descriptor_layout,
             sample_descriptor_layout,
@@ -276,7 +278,7 @@ impl State {
             .stage_flags(vk::ShaderStageFlags::ALL)
             .size(engine.properties.limits.max_push_constants_size)];
         let pipeline_layout_info = vk::PipelineLayoutCreateInfo::default()
-            .set_layouts(&descriptor_set_layouts)
+            .set_layouts(&descriptor_layouts)
             .push_constant_ranges(&push_constant_range);
         let pipeline_layout = unsafe {
             device
@@ -284,18 +286,6 @@ impl State {
                 .unwrap()
         };
 
-        // Clones device and moves handles no longer needed to deletion stack
-        // These handles are no longer valid in this scope after move
-        for layout in descriptor_set_layouts {
-            let device_clone = device.clone();
-            engine.deletion_stack.push(move || unsafe {
-                device_clone.destroy_descriptor_set_layout(layout, None);
-            });
-        }
-        let device_clone = device.clone();
-        engine.deletion_stack.push(move || unsafe {
-            device_clone.destroy_descriptor_pool(descriptor_pool, None);
-        });
 
         let copy_shader = mew::load_shader(device, "shaders/compiled/copy_swapchain.spv");
         let draw_shader = mew::load_shader(device, "shaders/compiled/mesh.spv");
@@ -425,7 +415,9 @@ impl State {
             draw_pipeline,
             cull_pipeline,
             pipeline_layout,
+            descriptor_pool,
             descriptor_sets,
+            descriptor_layouts,
             vertex_buffer,
             index_buffer,
             mesh_buffer,
@@ -479,6 +471,11 @@ impl Drop for State {
             device.destroy_pipeline(self.copy_pipeline, None);
             device.destroy_pipeline(self.draw_pipeline, None);
             device.destroy_pipeline(self.cull_pipeline, None);
+
+            device.destroy_descriptor_pool(self.descriptor_pool, None);
+            for layout in self.descriptor_layouts {
+                device.destroy_descriptor_set_layout(layout, None);
+            }
         }
     }
 }
