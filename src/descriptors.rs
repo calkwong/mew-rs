@@ -1,4 +1,6 @@
 use ash::{Device, vk};
+use std::sync::Arc;
+use std::sync::Mutex;
 
 pub enum RenderResourceTag {
     Buffer,
@@ -7,36 +9,42 @@ pub enum RenderResourceTag {
     Sampler,
 }
 
-pub struct RenderResourceHandle(u32);
+/// Handle recycling not implemented
+pub struct CountTracker {
+    next: u32,
+}
 
-impl Default for RenderResourceHandle {
-    fn default() -> Self {
-        Self(0)
+impl CountTracker {
+    pub fn add(&mut self) -> u32 {
+        let index = self.next;
+        self.next += 1;
+        index
     }
 }
 
-#[derive(Default)]
+pub type ImageTracker = Arc<Mutex<CountTracker>>;
+
 pub struct Descriptor {
     pub pool: vk::DescriptorPool,
     pub sets: [vk::DescriptorSet; 4],
     pub layouts: [vk::DescriptorSetLayout; 4],
 
-    buffer_info: Vec<vk::DescriptorBufferInfo>,
-    storage_info: Vec<vk::DescriptorImageInfo>,
-    sampled_info: Vec<vk::DescriptorImageInfo>,
-
-    next_buffer_handle: RenderResourceHandle,
-    next_storage_handle: RenderResourceHandle,
-    next_sampled_handle: RenderResourceHandle,
+    pub storage_image_count: ImageTracker,
+    pub sample_image_count: ImageTracker,
 }
 
 impl Descriptor {
-    pub fn new(pool: vk::DescriptorPool, sets: [vk::DescriptorSet; 4], layouts: [vk::DescriptorSetLayout; 4]) -> Self {
+    pub fn new(
+        pool: vk::DescriptorPool,
+        sets: [vk::DescriptorSet; 4],
+        layouts: [vk::DescriptorSetLayout; 4],
+    ) -> Self {
         Self {
             pool,
             sets,
             layouts,
-            ..Default::default()
+            storage_image_count: Arc::new(Mutex::new(CountTracker { next: 0 })),
+            sample_image_count: Arc::new(Mutex::new(CountTracker { next: 0 })),
         }
     }
 

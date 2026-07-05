@@ -22,7 +22,10 @@ use winit::{
 };
 
 pub mod camera;
+
 pub mod descriptors;
+use descriptors::{RenderResourceTag, get_descriptor_index};
+
 pub mod loader;
 
 pub const FRAMES_IN_FLIGHT: usize = 2;
@@ -514,7 +517,8 @@ impl Engine {
                 .unwrap()
         };
 
-        let descriptor = descriptors::Descriptor::new(descriptor_pool, descriptor_sets, descriptor_layouts);
+        let descriptor =
+            descriptors::Descriptor::new(descriptor_pool, descriptor_sets, descriptor_layouts);
 
         Self {
             entry,
@@ -542,6 +546,107 @@ impl Engine {
             properties: properties.properties,
         }
     }
+
+    pub fn update_image_descriptor(
+        &self,
+        handle: u32,
+        view: vk::ImageView,
+        tag: RenderResourceTag,
+    ) {
+        let descriptor = &self.descriptor;
+
+        let info = [vk::DescriptorImageInfo::default()
+            .image_layout(vk::ImageLayout::GENERAL)
+            .image_view(view)];
+
+        match tag {
+            RenderResourceTag::Storage => {
+                let index = get_descriptor_index(RenderResourceTag::Storage);
+
+                let write = vk::WriteDescriptorSet::default()
+                    .dst_set(descriptor.sets[index])
+                    .dst_binding(0)
+                    .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+                    .dst_array_element(handle)
+                    .image_info(&info)
+                    .descriptor_count(1);
+
+                let writes = [write];
+                unsafe {
+                    self.device.update_descriptor_sets(&writes, &[]);
+                }
+            }
+            RenderResourceTag::Sampled => {
+                let index = get_descriptor_index(RenderResourceTag::Sampled);
+
+                let write = vk::WriteDescriptorSet::default()
+                    .dst_set(descriptor.sets[index])
+                    .dst_binding(0)
+                    .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                    .dst_array_element(handle)
+                    .image_info(&info)
+                    .descriptor_count(1);
+
+                let writes = [write];
+                unsafe {
+                    self.device.update_descriptor_sets(&writes, &[]);
+                }
+            }
+            _ => panic!("Incorrect tag"),
+        }
+    }
+
+    // TODO: register buffer and samplers
+
+    pub fn register_image(&self, view: vk::ImageView, tag: RenderResourceTag) -> u32 {
+        let descriptor = &self.descriptor;
+
+        let info = [vk::DescriptorImageInfo::default()
+            .image_layout(vk::ImageLayout::GENERAL)
+            .image_view(view)];
+
+        match tag {
+            RenderResourceTag::Storage => {
+                let handle = { descriptor.storage_image_count.lock().unwrap().add() };
+                let index = get_descriptor_index(RenderResourceTag::Storage);
+
+                let write = vk::WriteDescriptorSet::default()
+                    .dst_set(descriptor.sets[index])
+                    .dst_binding(0)
+                    .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+                    .dst_array_element(handle)
+                    .image_info(&info)
+                    .descriptor_count(1);
+
+                let writes = [write];
+                unsafe {
+                    self.device.update_descriptor_sets(&writes, &[]);
+                }
+
+                handle
+            }
+            RenderResourceTag::Sampled => {
+                let handle = { descriptor.sample_image_count.lock().unwrap().add() };
+                let index = get_descriptor_index(RenderResourceTag::Sampled);
+
+                let write = vk::WriteDescriptorSet::default()
+                    .dst_set(descriptor.sets[index])
+                    .dst_binding(0)
+                    .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                    .dst_array_element(handle)
+                    .image_info(&info)
+                    .descriptor_count(1);
+
+                let writes = [write];
+                unsafe {
+                    self.device.update_descriptor_sets(&writes, &[]);
+                }
+
+                handle
+            }
+            _ => panic!("Incorrect tag"),
+        }
+    }
 }
 
 impl Drop for Engine {
@@ -557,7 +662,8 @@ impl Drop for Engine {
                 self.device.destroy_image_view(*image_view, None);
             });
 
-            self.device.destroy_pipeline_layout(self.pipeline_layout, None);
+            self.device
+                .destroy_pipeline_layout(self.pipeline_layout, None);
             self.descriptor.destroy(&self.device);
 
             // dbg!(self.allocator.generate_report());
