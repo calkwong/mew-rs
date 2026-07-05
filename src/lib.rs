@@ -1069,3 +1069,12 @@ pub fn get_infinite_reverse_perspective_matrix(fovy: f32, aspect: f32, near: f32
 
     matrix
 }
+
+pub fn as_bytes<T>(t: &Vec<T>) -> (&[u8], u64) {
+    let len = t.len() * std::mem::size_of::<T>();
+    let slice = unsafe {
+        std::slice::from_raw_parts(t.as_ptr() as *const u8, len)
+    };
+
+    (slice, len as u64)
+}

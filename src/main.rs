@@ -181,11 +181,7 @@ impl State {
         let gltf_path = std::env::args().nth(1).unwrap();
         let scene = mew::loader::load_gltf(&gltf_path);
 
-        let vertex_size = scene.vertices.len() * std::mem::size_of::<mew::loader::Vertex>();
-        let vertices = unsafe {
-            std::slice::from_raw_parts(scene.vertices.as_ptr() as *const u8, vertex_size)
-        };
-
+        let (vertices, len) = mew::as_bytes(&scene.vertices);
         let vertex_buffer = mew::create_buffer_with_data(
             device,
             engine.graphics_queue,
@@ -195,14 +191,11 @@ impl State {
             vk::BufferUsageFlags::STORAGE_BUFFER
                 | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
                 | vk::BufferUsageFlags::TRANSFER_DST,
-            vertex_size as u64,
+            len,
             vertices,
         );
 
-        let indices_size = scene.indices.len() * std::mem::size_of::<u32>();
-        let indices = unsafe {
-            std::slice::from_raw_parts(scene.indices.as_ptr() as *const u8, indices_size)
-        };
+        let (indices, len) = mew::as_bytes(&scene.indices);
         let index_buffer = mew::create_buffer_with_data(
             device,
             engine.graphics_queue,
@@ -213,13 +206,11 @@ impl State {
                 | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
                 | vk::BufferUsageFlags::TRANSFER_DST
                 | vk::BufferUsageFlags::INDEX_BUFFER,
-            indices_size as u64,
+            len,
             indices,
         );
 
-        let meshes_size = scene.meshes.len() * std::mem::size_of::<mew::loader::Mesh>();
-        let meshes =
-            unsafe { std::slice::from_raw_parts(scene.meshes.as_ptr() as *const u8, meshes_size) };
+        let (meshes, len) = mew::as_bytes(&scene.meshes);
         let mesh_buffer = mew::create_buffer_with_data(
             device,
             engine.graphics_queue,
@@ -229,14 +220,11 @@ impl State {
             vk::BufferUsageFlags::STORAGE_BUFFER
                 | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
                 | vk::BufferUsageFlags::TRANSFER_DST,
-            meshes_size as u64,
+            len,
             meshes,
         );
 
-        let object_size = scene.renderables.len() * std::mem::size_of::<mew::loader::ObjectData>();
-        let objects = unsafe {
-            std::slice::from_raw_parts(scene.renderables.as_ptr() as *const u8, object_size)
-        };
+        let (objects, len) = mew::as_bytes(&scene.renderables);
         let object_buffer = mew::create_buffer_with_data(
             device,
             engine.graphics_queue,
@@ -246,7 +234,7 @@ impl State {
             vk::BufferUsageFlags::STORAGE_BUFFER
                 | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
                 | vk::BufferUsageFlags::TRANSFER_DST,
-            object_size as u64,
+            len,
             objects,
         );
 
