@@ -31,10 +31,6 @@ struct State {
     copy_pipeline: vk::Pipeline,
     draw_pipeline: vk::Pipeline,
     cull_pipeline: vk::Pipeline,
-    pipeline_layout: vk::PipelineLayout,
-    descriptor_pool: vk::DescriptorPool,
-    descriptor_sets: [vk::DescriptorSet; 4],
-    descriptor_layouts: [vk::DescriptorSetLayout; 4],
     vertex_buffer: mew::Buffer,
     index_buffer: mew::Buffer,
     mesh_buffer: mew::Buffer,
@@ -141,108 +137,6 @@ impl State {
             });
         }
 
-        // Init descriptors
-        let pool_size = [
-            vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::UNIFORM_BUFFER,
-                descriptor_count: 3,
-            },
-            vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::STORAGE_BUFFER,
-                descriptor_count: 3,
-            },
-            vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::STORAGE_IMAGE,
-                descriptor_count: 300,
-            },
-            vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::SAMPLED_IMAGE,
-                descriptor_count: 300,
-            },
-            vk::DescriptorPoolSize {
-                ty: vk::DescriptorType::SAMPLER,
-                descriptor_count: 5,
-            },
-        ];
-        let descriptor_pool = mew::descriptors::create_descriptor_pool(&device, &pool_size);
-        let buffer_binding = vk::DescriptorSetLayoutBinding::default()
-            .binding(0)
-            .descriptor_count(mew::FRAMES_IN_FLIGHT as u32)
-            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-            .stage_flags(vk::ShaderStageFlags::ALL);
-
-        let storage_image_binding = vk::DescriptorSetLayoutBinding::default()
-            .binding(0)
-            .descriptor_count(300)
-            .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
-            .stage_flags(vk::ShaderStageFlags::ALL);
-
-        let sample_image_binding = vk::DescriptorSetLayoutBinding::default()
-            .binding(0)
-            .descriptor_count(300)
-            .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
-            .stage_flags(vk::ShaderStageFlags::ALL);
-
-        let sampler_binding = vk::DescriptorSetLayoutBinding::default()
-            .binding(0)
-            .descriptor_count(5)
-            .descriptor_type(vk::DescriptorType::SAMPLER)
-            .stage_flags(vk::ShaderStageFlags::ALL);
-
-        // setup for bindless descriptors
-        let buffer_descriptor_layout =
-            mew::descriptors::create_descriptor_layouts(&device, buffer_binding, &[]);
-        let storage_descriptor_layout = mew::descriptors::create_descriptor_layouts(
-            &device,
-            storage_image_binding,
-            &[vk::DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT
-                | vk::DescriptorBindingFlags::PARTIALLY_BOUND],
-        );
-        let sample_descriptor_layout = mew::descriptors::create_descriptor_layouts(
-            &device,
-            sample_image_binding,
-            &[vk::DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT
-                | vk::DescriptorBindingFlags::PARTIALLY_BOUND],
-        );
-        let sampler_descriptor_layout = mew::descriptors::create_descriptor_layouts(
-            &device,
-            sampler_binding,
-            &[vk::DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT
-                | vk::DescriptorBindingFlags::PARTIALLY_BOUND],
-        );
-
-        let buffer_descriptor = mew::descriptors::create_descriptor_sets(
-            &device,
-            descriptor_pool,
-            buffer_descriptor_layout,
-            3,
-        );
-        let storage_descriptor = mew::descriptors::create_descriptor_sets(
-            &device,
-            descriptor_pool,
-            storage_descriptor_layout,
-            300,
-        );
-        let sample_descriptor = mew::descriptors::create_descriptor_sets(
-            &device,
-            descriptor_pool,
-            sample_descriptor_layout,
-            300,
-        );
-        let sampler_descriptor = mew::descriptors::create_descriptor_sets(
-            &device,
-            descriptor_pool,
-            sampler_descriptor_layout,
-            5,
-        );
-
-        let descriptor_sets = [
-            buffer_descriptor,
-            storage_descriptor,
-            sample_descriptor,
-            sampler_descriptor,
-        ];
-
         // TODO: create fn for write desc set
         let mut image_infos: Vec<vk::DescriptorImageInfo> =
             Vec::from([vk::DescriptorImageInfo::default()
@@ -258,7 +152,7 @@ impl State {
 
         // Write to descriptors
         let storage_descriptor_write = vk::WriteDescriptorSet::default()
-            .dst_set(storage_descriptor)
+            .dst_set(engine.descriptor_sets[1])
             .dst_binding(0)
             .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
             .image_info(&image_infos)
@@ -267,35 +161,15 @@ impl State {
             device.update_descriptor_sets(&[storage_descriptor_write], &[]);
         }
 
-        let descriptor_layouts = [
-            buffer_descriptor_layout,
-            storage_descriptor_layout,
-            sample_descriptor_layout,
-            sampler_descriptor_layout,
-        ];
-
-        let push_constant_range = [vk::PushConstantRange::default()
-            .stage_flags(vk::ShaderStageFlags::ALL)
-            .size(engine.properties.limits.max_push_constants_size)];
-        let pipeline_layout_info = vk::PipelineLayoutCreateInfo::default()
-            .set_layouts(&descriptor_layouts)
-            .push_constant_ranges(&push_constant_range);
-        let pipeline_layout = unsafe {
-            device
-                .create_pipeline_layout(&pipeline_layout_info, None)
-                .unwrap()
-        };
-
-
         let copy_shader = mew::load_shader(device, "shaders/compiled/copy_swapchain.spv");
         let draw_shader = mew::load_shader(device, "shaders/compiled/mesh.spv");
         let cull_shader = mew::load_shader(device, "shaders/compiled/culling.spv");
 
-        let cull_pipeline = mew::create_compute_pipeline(&device, pipeline_layout, cull_shader);
-        let copy_pipeline = mew::create_compute_pipeline(&device, pipeline_layout, copy_shader);
+        let cull_pipeline = mew::create_compute_pipeline(&device, engine.pipeline_layout, cull_shader);
+        let copy_pipeline = mew::create_compute_pipeline(&device, engine.pipeline_layout, copy_shader);
         let draw_pipeline = mew::create_graphics_pipeline(
             &device,
-            pipeline_layout,
+            engine.pipeline_layout,
             draw_shader,
             &[vk::ShaderStageFlags::VERTEX, vk::ShaderStageFlags::FRAGMENT],
             draw_image.format,
@@ -414,10 +288,6 @@ impl State {
             copy_pipeline,
             draw_pipeline,
             cull_pipeline,
-            pipeline_layout,
-            descriptor_pool,
-            descriptor_sets,
-            descriptor_layouts,
             vertex_buffer,
             index_buffer,
             mesh_buffer,
@@ -467,15 +337,9 @@ impl Drop for State {
                 &mut self.dispatch_buffer,
             );
 
-            device.destroy_pipeline_layout(self.pipeline_layout, None);
             device.destroy_pipeline(self.copy_pipeline, None);
             device.destroy_pipeline(self.draw_pipeline, None);
             device.destroy_pipeline(self.cull_pipeline, None);
-
-            device.destroy_descriptor_pool(self.descriptor_pool, None);
-            for layout in self.descriptor_layouts {
-                device.destroy_descriptor_set_layout(layout, None);
-            }
         }
     }
 }
@@ -703,14 +567,14 @@ fn render_loop(state: &mut State) {
 
     unsafe {
         state
-            .descriptor_sets
+            .engine.descriptor_sets
             .iter()
             .enumerate()
             .for_each(|(index, descriptor)| {
                 device.cmd_bind_descriptor_sets(
                     cmd,
                     vk::PipelineBindPoint::COMPUTE,
-                    state.pipeline_layout,
+                    state.engine.pipeline_layout,
                     index as u32,
                     &[*descriptor],
                     &[],
@@ -718,7 +582,7 @@ fn render_loop(state: &mut State) {
                 device.cmd_bind_descriptor_sets(
                     cmd,
                     vk::PipelineBindPoint::GRAPHICS,
-                    state.pipeline_layout,
+                    state.engine.pipeline_layout,
                     index as u32,
                     &[*descriptor],
                     &[],
@@ -839,7 +703,7 @@ fn render_loop(state: &mut State) {
             far: state.camera.far,
             count: renderables_count as u32,
         };
-        mew::push_constants(&device, cmd, state.pipeline_layout, &pc, &mut push_constants_scratch);
+        mew::push_constants(&device, cmd, state.engine.pipeline_layout, &pc, &mut push_constants_scratch);
 
         let group_count_x = mew::get_group_count(renderables_count as u32, 256);
         device.cmd_dispatch(cmd, group_count_x, 1, 1);
@@ -919,7 +783,7 @@ fn render_loop(state: &mut State) {
             mesh_buffer: state.mesh_buffer.address,
             object_buffer: state.object_buffer.address,
         };
-        mew::push_constants(&device, cmd, state.pipeline_layout, &pc, &mut push_constants_scratch);
+        mew::push_constants(&device, cmd, state.engine.pipeline_layout, &pc, &mut push_constants_scratch);
 
         device.cmd_bind_index_buffer(cmd, state.index_buffer.buffer, 0, vk::IndexType::UINT32);
 
@@ -964,7 +828,7 @@ fn render_loop(state: &mut State) {
             src_id: 0,
             dst_id: swapchain_idx as u32 + 1,
         };
-        mew::push_constants(&device, cmd, state.pipeline_layout, &pc, &mut push_constants_scratch);
+        mew::push_constants(&device, cmd, state.engine.pipeline_layout, &pc, &mut push_constants_scratch);
         let group_count_x = mew::get_group_count(state.engine.swapchain.extent.width, 8);
         let group_count_y = mew::get_group_count(state.engine.swapchain.extent.height, 8);
         device.cmd_dispatch(cmd, group_count_x, group_count_y, 1);
@@ -1099,7 +963,7 @@ fn recreate_resources_on_swapchain_resize(state: &mut State) {
 
     // update descriptors
     let storage_descriptor_write = vk::WriteDescriptorSet::default()
-        .dst_set(state.descriptor_sets[1])
+        .dst_set(state.engine.descriptor_sets[1])
         .dst_binding(0)
         .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
         .image_info(&image_infos)

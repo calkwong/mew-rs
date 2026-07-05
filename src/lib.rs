@@ -73,6 +73,10 @@ pub struct Engine {
     pub graphics_queue: Queue,
     pub allocator: ManuallyDrop<Arc<Mutex<Allocator>>>,
     pub swapchain: Swapchain,
+    pub descriptor_pool: vk::DescriptorPool,
+    pub descriptor_sets: [vk::DescriptorSet; 4],
+    pub descriptor_layouts: [vk::DescriptorSetLayout; 4],
+    pub pipeline_layout: vk::PipelineLayout,
     pub debug_utils_loader: debug_utils::Instance,
     pub debug_callback: DebugUtilsMessengerEXT,
     pub properties: vk::PhysicalDeviceProperties,
@@ -368,6 +372,151 @@ impl Engine {
             instance.get_physical_device_properties2(pdevice, &mut properties);
         }
 
+        // Init descriptors
+        let pool_size = [
+            vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::UNIFORM_BUFFER,
+                descriptor_count: 3,
+            },
+            vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::STORAGE_BUFFER,
+                descriptor_count: 3,
+            },
+            vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::STORAGE_IMAGE,
+                descriptor_count: 300,
+            },
+            vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::SAMPLED_IMAGE,
+                descriptor_count: 300,
+            },
+            vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::SAMPLER,
+                descriptor_count: 5,
+            },
+        ];
+        let descriptor_pool = descriptors::create_descriptor_pool(&device, &pool_size);
+        let buffer_binding = vk::DescriptorSetLayoutBinding::default()
+            .binding(0)
+            .descriptor_count(FRAMES_IN_FLIGHT as u32)
+            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+            .stage_flags(vk::ShaderStageFlags::ALL);
+
+        let storage_image_binding = vk::DescriptorSetLayoutBinding::default()
+            .binding(0)
+            .descriptor_count(300)
+            .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+            .stage_flags(vk::ShaderStageFlags::ALL);
+
+        let sample_image_binding = vk::DescriptorSetLayoutBinding::default()
+            .binding(0)
+            .descriptor_count(300)
+            .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+            .stage_flags(vk::ShaderStageFlags::ALL);
+
+        let sampler_binding = vk::DescriptorSetLayoutBinding::default()
+            .binding(0)
+            .descriptor_count(5)
+            .descriptor_type(vk::DescriptorType::SAMPLER)
+            .stage_flags(vk::ShaderStageFlags::ALL);
+
+        // setup for bindless descriptors
+        let buffer_descriptor_layout =
+            descriptors::create_descriptor_layouts(&device, buffer_binding, &[]);
+        let storage_descriptor_layout = descriptors::create_descriptor_layouts(
+            &device,
+            storage_image_binding,
+            &[vk::DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT
+                | vk::DescriptorBindingFlags::PARTIALLY_BOUND],
+        );
+        let sample_descriptor_layout = descriptors::create_descriptor_layouts(
+            &device,
+            sample_image_binding,
+            &[vk::DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT
+                | vk::DescriptorBindingFlags::PARTIALLY_BOUND],
+        );
+        let sampler_descriptor_layout = descriptors::create_descriptor_layouts(
+            &device,
+            sampler_binding,
+            &[vk::DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT
+                | vk::DescriptorBindingFlags::PARTIALLY_BOUND],
+        );
+
+        let buffer_descriptor = descriptors::create_descriptor_sets(
+            &device,
+            descriptor_pool,
+            buffer_descriptor_layout,
+            3,
+        );
+        let storage_descriptor = descriptors::create_descriptor_sets(
+            &device,
+            descriptor_pool,
+            storage_descriptor_layout,
+            300,
+        );
+        let sample_descriptor = descriptors::create_descriptor_sets(
+            &device,
+            descriptor_pool,
+            sample_descriptor_layout,
+            300,
+        );
+        let sampler_descriptor = descriptors::create_descriptor_sets(
+            &device,
+            descriptor_pool,
+            sampler_descriptor_layout,
+            5,
+        );
+
+        let descriptor_sets = [
+            buffer_descriptor,
+            storage_descriptor,
+            sample_descriptor,
+            sampler_descriptor,
+        ];
+
+        // // TODO: create fn for write desc set
+        // let mut image_infos: Vec<vk::DescriptorImageInfo> =
+        //     Vec::from([vk::DescriptorImageInfo::default()
+        //         .image_layout(vk::ImageLayout::GENERAL)
+        //         .image_view(draw_image.view)]);
+        // engine.swapchain.views.iter().for_each(|image_view| {
+        //     image_infos.push(
+        //         vk::DescriptorImageInfo::default()
+        //             .image_layout(vk::ImageLayout::GENERAL)
+        //             .image_view(*image_view),
+        //     );
+        // });
+
+        // // Write to descriptors
+        // let storage_descriptor_write = vk::WriteDescriptorSet::default()
+        //     .dst_set(storage_descriptor)
+        //     .dst_binding(0)
+        //     .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+        //     .image_info(&image_infos)
+        //     .descriptor_count(4);
+        // unsafe {
+        //     device.update_descriptor_sets(&[storage_descriptor_write], &[]);
+        // }
+
+        let descriptor_layouts = [
+            buffer_descriptor_layout,
+            storage_descriptor_layout,
+            sample_descriptor_layout,
+            sampler_descriptor_layout,
+        ];
+
+        let push_constant_range = [vk::PushConstantRange::default()
+            .stage_flags(vk::ShaderStageFlags::ALL)
+            .size(properties.properties.limits.max_push_constants_size)];
+        let pipeline_layout_info = vk::PipelineLayoutCreateInfo::default()
+            .set_layouts(&descriptor_layouts)
+            .push_constant_ranges(&push_constant_range);
+        let pipeline_layout = unsafe {
+            device
+                .create_pipeline_layout(&pipeline_layout_info, None)
+                .unwrap()
+        };
+
         Self {
             entry,
             instance,
@@ -387,6 +536,10 @@ impl Engine {
                 views: swapchain_image_views,
                 dirty: false,
             },
+            descriptor_pool,
+            descriptor_sets,
+            descriptor_layouts,
+            pipeline_layout,
             debug_utils_loader,
             debug_callback,
             properties: properties.properties,
@@ -406,6 +559,12 @@ impl Drop for Engine {
             swapchain.views.iter().for_each(|image_view| {
                 self.device.destroy_image_view(*image_view, None);
             });
+
+            self.device.destroy_pipeline_layout(self.pipeline_layout, None);
+            self.device.destroy_descriptor_pool(self.descriptor_pool, None);
+            for layout in self.descriptor_layouts {
+                self.device.destroy_descriptor_set_layout(layout, None);
+            }
 
             // dbg!(self.allocator.generate_report());
             ManuallyDrop::drop(&mut self.allocator);
