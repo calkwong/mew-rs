@@ -33,6 +33,7 @@ use swapchain::Swapchain;
 use crate::swapchain::create_swapchain;
 
 pub const FRAMES_IN_FLIGHT: usize = 2;
+const MAX_PUSH_CONSTANTS_SIZE: u32 = 256;
 
 #[derive(Default, Copy, Clone)]
 pub struct FrameData {
@@ -267,6 +268,11 @@ impl Engine {
         unsafe {
             instance.get_physical_device_properties2(pdevice, &mut properties);
         }
+
+        assert_eq!(
+            properties.properties.limits.max_push_constants_size,
+            MAX_PUSH_CONSTANTS_SIZE
+        );
 
         let graphics_queue = unsafe { device.get_device_queue(queue_family_index, 0) };
 
@@ -716,18 +722,14 @@ pub fn push_constants<T>(
     cmd: vk::CommandBuffer,
     layout: vk::PipelineLayout,
     data: &T,
-    scratch: &mut [u8],
 ) {
     let size = std::mem::size_of::<T>();
     let len = size / std::mem::size_of::<u8>();
 
-    let as_u8_slice = unsafe { std::slice::from_raw_parts((data as *const T) as *const u8, len) };
-
-    scratch.fill(0u8);
-    scratch[..size].copy_from_slice(as_u8_slice);
+    let slice = unsafe { std::slice::from_raw_parts((data as *const T) as *const u8, len) };
 
     unsafe {
-        device.cmd_push_constants(cmd, layout, vk::ShaderStageFlags::ALL, 0, scratch);
+        device.cmd_push_constants(cmd, layout, vk::ShaderStageFlags::ALL, 0, &slice);
     }
 }
 

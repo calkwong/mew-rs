@@ -18,7 +18,6 @@ use winit::{
 
 const MAX_QUERY_COUNT: u32 = 10;
 const CURRENT_QUERIES: u32 = 1;
-const MAX_PUSH_CONSTANTS_SIZE: u32 = 256;
 
 struct State {
     window: Window,
@@ -50,11 +49,6 @@ struct Images {
 impl State {
     fn new(window: Option<Window>) -> Self {
         let engine = mew::Engine::new(window.as_ref());
-
-        assert_eq!(
-            engine.properties.limits.max_push_constants_size,
-            MAX_PUSH_CONSTANTS_SIZE
-        );
 
         let camera = Camera::default().position(glam::Vec3::new(0.0, 0.0, 5.0));
 
@@ -524,8 +518,6 @@ fn render_loop(state: &mut State) {
         device.reset_fences(&[fence]).unwrap();
     }
 
-    let mut push_constants_scratch = [0u8; MAX_PUSH_CONSTANTS_SIZE as usize];
-
     unsafe {
         device
             .reset_command_pool(frame_data.command_pool, vk::CommandPoolResetFlags::empty())
@@ -680,7 +672,6 @@ fn render_loop(state: &mut State) {
             cmd,
             state.engine.pipeline_layout,
             &pc,
-            &mut push_constants_scratch,
         );
 
         let group_count_x = mew::get_group_count(renderables_count as u32, 256);
@@ -766,7 +757,6 @@ fn render_loop(state: &mut State) {
             cmd,
             state.engine.pipeline_layout,
             &pc,
-            &mut push_constants_scratch,
         );
 
         device.cmd_bind_index_buffer(cmd, state.index_buffer.buffer, 0, vk::IndexType::UINT32);
@@ -811,7 +801,6 @@ fn render_loop(state: &mut State) {
             cmd,
             state.engine.pipeline_layout,
             &pc,
-            &mut push_constants_scratch,
         );
         let group_count_x = mew::get_group_count(state.engine.swapchain.extent.width, 8);
         let group_count_y = mew::get_group_count(state.engine.swapchain.extent.height, 8);
