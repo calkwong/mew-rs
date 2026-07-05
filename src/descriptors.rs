@@ -1,4 +1,63 @@
-use ash::{vk, Device};
+use ash::{Device, vk};
+
+pub enum RenderResourceTag {
+    Buffer,
+    Storage,
+    Sampled,
+    Sampler,
+}
+
+pub struct RenderResourceHandle(u32);
+
+impl Default for RenderResourceHandle {
+    fn default() -> Self {
+        Self(0)
+    }
+}
+
+#[derive(Default)]
+pub struct Descriptor {
+    pub pool: vk::DescriptorPool,
+    pub sets: [vk::DescriptorSet; 4],
+    pub layouts: [vk::DescriptorSetLayout; 4],
+
+    buffer_info: Vec<vk::DescriptorBufferInfo>,
+    storage_info: Vec<vk::DescriptorImageInfo>,
+    sampled_info: Vec<vk::DescriptorImageInfo>,
+
+    next_buffer_handle: RenderResourceHandle,
+    next_storage_handle: RenderResourceHandle,
+    next_sampled_handle: RenderResourceHandle,
+}
+
+impl Descriptor {
+    pub fn new(pool: vk::DescriptorPool, sets: [vk::DescriptorSet; 4], layouts: [vk::DescriptorSetLayout; 4]) -> Self {
+        Self {
+            pool,
+            sets,
+            layouts,
+            ..Default::default()
+        }
+    }
+
+    pub fn destroy(&self, device: &Device) {
+        unsafe {
+            device.destroy_descriptor_pool(self.pool, None);
+            for layout in self.layouts {
+                device.destroy_descriptor_set_layout(layout, None);
+            }
+        }
+    }
+}
+
+pub fn get_descriptor_index(tag: RenderResourceTag) -> usize {
+    match tag {
+        RenderResourceTag::Buffer => 0,
+        RenderResourceTag::Storage => 1,
+        RenderResourceTag::Sampled => 2,
+        RenderResourceTag::Sampler => 3,
+    }
+}
 
 pub fn create_descriptor_pool(
     device: &Device,

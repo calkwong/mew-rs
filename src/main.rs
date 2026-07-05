@@ -152,7 +152,7 @@ impl State {
 
         // Write to descriptors
         let storage_descriptor_write = vk::WriteDescriptorSet::default()
-            .dst_set(engine.descriptor_sets[1])
+            .dst_set(engine.descriptor.sets[1])
             .dst_binding(0)
             .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
             .image_info(&image_infos)
@@ -567,7 +567,7 @@ fn render_loop(state: &mut State) {
 
     unsafe {
         state
-            .engine.descriptor_sets
+            .engine.descriptor.sets
             .iter()
             .enumerate()
             .for_each(|(index, descriptor)| {
@@ -963,7 +963,7 @@ fn recreate_resources_on_swapchain_resize(state: &mut State) {
 
     // update descriptors
     let storage_descriptor_write = vk::WriteDescriptorSet::default()
-        .dst_set(state.engine.descriptor_sets[1])
+        .dst_set(state.engine.descriptor.sets[1])
         .dst_binding(0)
         .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
         .image_info(&image_infos)

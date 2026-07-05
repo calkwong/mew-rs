@@ -23,7 +23,6 @@ use winit::{
 
 pub mod camera;
 pub mod descriptors;
-// pub mod imgui_backend;
 pub mod loader;
 
 pub const FRAMES_IN_FLIGHT: usize = 2;
@@ -73,9 +72,7 @@ pub struct Engine {
     pub graphics_queue: Queue,
     pub allocator: ManuallyDrop<Arc<Mutex<Allocator>>>,
     pub swapchain: Swapchain,
-    pub descriptor_pool: vk::DescriptorPool,
-    pub descriptor_sets: [vk::DescriptorSet; 4],
-    pub descriptor_layouts: [vk::DescriptorSetLayout; 4],
+    pub descriptor: descriptors::Descriptor,
     pub pipeline_layout: vk::PipelineLayout,
     pub debug_utils_loader: debug_utils::Instance,
     pub debug_callback: DebugUtilsMessengerEXT,
@@ -517,6 +514,8 @@ impl Engine {
                 .unwrap()
         };
 
+        let descriptor = descriptors::Descriptor::new(descriptor_pool, descriptor_sets, descriptor_layouts);
+
         Self {
             entry,
             instance,
@@ -536,9 +535,7 @@ impl Engine {
                 views: swapchain_image_views,
                 dirty: false,
             },
-            descriptor_pool,
-            descriptor_sets,
-            descriptor_layouts,
+            descriptor,
             pipeline_layout,
             debug_utils_loader,
             debug_callback,
@@ -561,10 +558,7 @@ impl Drop for Engine {
             });
 
             self.device.destroy_pipeline_layout(self.pipeline_layout, None);
-            self.device.destroy_descriptor_pool(self.descriptor_pool, None);
-            for layout in self.descriptor_layouts {
-                self.device.destroy_descriptor_set_layout(layout, None);
-            }
+            self.descriptor.destroy(&self.device);
 
             // dbg!(self.allocator.generate_report());
             ManuallyDrop::drop(&mut self.allocator);
