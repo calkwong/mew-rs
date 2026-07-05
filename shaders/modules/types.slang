@@ -1,35 +1,40 @@
 module types;
 
-public struct ObjectData {
-  public float4x4 world_transform;
-  public uint mesh_id;
-  uint padding[3];
+public struct ObjectData
+{
+    public float4x4 world_transform;
+    public uint mesh_id;
+    uint padding[3];
 }
 
-public struct Mesh {
-  public uint vertex_offset;
-  public uint first_index;
-  public uint index_count;
-  public float radius;
-  public float3 center;
+public struct Mesh
+{
+    public uint vertex_offset;
+    public uint first_index;
+    public uint index_count;
+    public float radius;
+    public float3 center;
 }
 
-public struct Vertex {
-  public float3 pos;
-  float padding;
-  public float3 normal;
-  float padding2;
+public struct Vertex
+{
+    public float3 pos;
+    float padding;
+    public float3 normal;
+    float padding2;
 }
 
-public struct DrawIndirect {
-  public uint index_count;
-  public uint instance_count;
-  public uint first_index;
-  public int vertex_offset;
-  public uint first_instance;
+public struct DrawIndirect
+{
+    public uint index_count;
+    public uint instance_count;
+    public uint first_index;
+    public int vertex_offset;
+    public uint first_instance;
 }
 
-public struct Dispatch {
+public struct Dispatch
+{
     public uint x;
     public uint y;
     public uint z;
