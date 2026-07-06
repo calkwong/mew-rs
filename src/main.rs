@@ -175,7 +175,7 @@ impl State {
         let gltf_path = std::env::args().nth(1).unwrap();
         let scene = mew::loader::load_gltf(&gltf_path);
 
-        let (vertices, len) = mew::as_bytes(&scene.vertices);
+        let vertices = mew::as_bytes(&scene.vertices);
         let vertex_buffer = mew::create_buffer_with_data(
             device,
             engine.graphics_queue,
@@ -185,11 +185,11 @@ impl State {
             vk::BufferUsageFlags::STORAGE_BUFFER
                 | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
                 | vk::BufferUsageFlags::TRANSFER_DST,
-            len,
+            vertices.len() as u64,
             vertices,
         );
 
-        let (indices, len) = mew::as_bytes(&scene.indices);
+        let indices = mew::as_bytes(&scene.indices);
         let index_buffer = mew::create_buffer_with_data(
             device,
             engine.graphics_queue,
@@ -200,11 +200,11 @@ impl State {
                 | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
                 | vk::BufferUsageFlags::TRANSFER_DST
                 | vk::BufferUsageFlags::INDEX_BUFFER,
-            len,
+            indices.len() as u64,
             indices,
         );
 
-        let (meshes, len) = mew::as_bytes(&scene.meshes);
+        let meshes = mew::as_bytes(&scene.meshes);
         let mesh_buffer = mew::create_buffer_with_data(
             device,
             engine.graphics_queue,
@@ -214,11 +214,11 @@ impl State {
             vk::BufferUsageFlags::STORAGE_BUFFER
                 | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
                 | vk::BufferUsageFlags::TRANSFER_DST,
-            len,
+            meshes.len() as u64,
             meshes,
         );
 
-        let (objects, len) = mew::as_bytes(&scene.renderables);
+        let objects = mew::as_bytes(&scene.renderables);
         let object_buffer = mew::create_buffer_with_data(
             device,
             engine.graphics_queue,
@@ -228,7 +228,7 @@ impl State {
             vk::BufferUsageFlags::STORAGE_BUFFER
                 | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
                 | vk::BufferUsageFlags::TRANSFER_DST,
-            len,
+            objects.len() as u64,
             objects,
         );
 
@@ -667,12 +667,7 @@ fn render_loop(state: &mut State) {
             far: state.camera.far,
             count: renderables_count as u32,
         };
-        mew::push_constants(
-            &device,
-            cmd,
-            state.engine.pipeline_layout,
-            &pc,
-        );
+        mew::push_constants(&device, cmd, state.engine.pipeline_layout, &pc);
 
         let group_count_x = mew::get_group_count(renderables_count as u32, 256);
         device.cmd_dispatch(cmd, group_count_x, 1, 1);
@@ -752,12 +747,7 @@ fn render_loop(state: &mut State) {
             mesh_buffer: state.mesh_buffer.address,
             object_buffer: state.object_buffer.address,
         };
-        mew::push_constants(
-            &device,
-            cmd,
-            state.engine.pipeline_layout,
-            &pc,
-        );
+        mew::push_constants(&device, cmd, state.engine.pipeline_layout, &pc);
 
         device.cmd_bind_index_buffer(cmd, state.index_buffer.buffer, 0, vk::IndexType::UINT32);
 
@@ -796,12 +786,7 @@ fn render_loop(state: &mut State) {
             src_id: state.images.draw_index,
             dst_id: state.images.swapchain_indices[swapchain_idx],
         };
-        mew::push_constants(
-            &device,
-            cmd,
-            state.engine.pipeline_layout,
-            &pc,
-        );
+        mew::push_constants(&device, cmd, state.engine.pipeline_layout, &pc);
         let group_count_x = mew::get_group_count(state.engine.swapchain.extent.width, 8);
         let group_count_y = mew::get_group_count(state.engine.swapchain.extent.height, 8);
         device.cmd_dispatch(cmd, group_count_x, group_count_y, 1);
