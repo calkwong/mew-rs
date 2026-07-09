@@ -17,7 +17,7 @@ use winit::{
 
 const CURRENT_QUERIES: u32 = 1;
 
-struct State {
+struct Renderer {
     window: Window,
     backend: mew::Device,
 
@@ -46,7 +46,7 @@ struct Framebuffer {
     swapchain_indices: Vec<u32>,
 }
 
-impl State {
+impl Renderer {
     fn new(window: Window) -> Self {
         let backend = mew::Device::new(&window);
 
@@ -217,7 +217,7 @@ impl State {
     }
 }
 
-impl Drop for State {
+impl Drop for Renderer {
     fn drop(&mut self) {
         let device = &self.backend.device;
 
@@ -249,12 +249,12 @@ impl Drop for State {
 }
 
 struct App {
-    state: Option<State>,
+    renderer: Option<Renderer>,
 }
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if let Some(_) = self.state.as_ref() {
+        if let Some(_) = self.renderer.as_ref() {
             return;
         }
 
@@ -273,7 +273,7 @@ impl ApplicationHandler for App {
             )
             .expect("Window creation failed");
 
-        self.state = Some(State::new(window));
+        self.renderer = Some(Renderer::new(window));
     }
 
     fn device_event(
@@ -284,8 +284,8 @@ impl ApplicationHandler for App {
     ) {
         match event {
             winit::event::DeviceEvent::MouseMotion { delta } => {
-                if let Some(state) = self.state.as_mut() {
-                    state
+                if let Some(renderer) = self.renderer.as_mut() {
+                    renderer
                         .camera
                         .process_mouse_input(delta.0 as f32, delta.1 as f32);
                 }
@@ -303,11 +303,11 @@ impl ApplicationHandler for App {
         match event {
             // This should be providing us with new dims, but it's returning outdated dims which can cause OOB surface extent - possibly Niri specific?
             winit::event::WindowEvent::Resized(_) => {
-                if let Some(state) = self.state.as_mut() {
-                    recreate_swapchain(&mut state.backend, &state.window);
-                    recreate_resources_on_swapchain_resize(state);
+                if let Some(renderer) = self.renderer.as_mut() {
+                    recreate_swapchain(&mut renderer.backend, &renderer.window);
+                    recreate_resources_on_swapchain_resize(renderer);
 
-                    let window_size = state.window.inner_size();
+                    let window_size = renderer.window.inner_size();
                     println!(
                         "Swapchain resize: {}x{}",
                         window_size.width, window_size.height
@@ -315,14 +315,14 @@ impl ApplicationHandler for App {
                 }
             }
             winit::event::WindowEvent::RedrawRequested => {
-                if let Some(state) = self.state.as_mut() {
-                    render_loop(state);
+                if let Some(renderer) = self.renderer.as_mut() {
+                    render_loop(renderer);
 
-                    if state.backend.swapchain.dirty {
-                        recreate_swapchain(&mut state.backend, &state.window);
-                        recreate_resources_on_swapchain_resize(state);
+                    if renderer.backend.swapchain.dirty {
+                        recreate_swapchain(&mut renderer.backend, &renderer.window);
+                        recreate_resources_on_swapchain_resize(renderer);
 
-                        let window_size = state.window.inner_size();
+                        let window_size = renderer.window.inner_size();
                         println!(
                             "Swapchain resize: {}x{}",
                             window_size.width, window_size.height
@@ -339,7 +339,7 @@ impl ApplicationHandler for App {
                     },
                 ..
             } => {
-                let camera = &mut self.state.as_mut().unwrap().camera;
+                let camera = &mut self.renderer.as_mut().unwrap().camera;
 
                 match (code, element_state) {
                     (KeyCode::Escape, ElementState::Pressed) => {
@@ -377,44 +377,44 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(state) = self.state.as_mut() {
+        if let Some(renderer) = self.renderer.as_mut() {
             let start = Instant::now();
-            if let Some(last_frame_time) = state.last_frame_time {
+            if let Some(last_frame_time) = renderer.last_frame_time {
                 let delta_time = (start - last_frame_time).as_secs_f32();
-                state.last_frame_time = Some(start);
-                state.camera.update(delta_time);
+                renderer.last_frame_time = Some(start);
+                renderer.camera.update(delta_time);
             } else {
-                state.last_frame_time = Some(start);
+                renderer.last_frame_time = Some(start);
             }
 
-            state.window.request_redraw();
+            renderer.window.request_redraw();
         }
     }
 
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(state) = self.state.as_ref() {
-            unsafe { state.backend.device.device_wait_idle().unwrap() };
+        if let Some(renderer) = self.renderer.as_ref() {
+            unsafe { renderer.backend.device.device_wait_idle().unwrap() };
         }
 
-        self.state = None;
+        self.renderer = None;
     }
 }
 
-fn render_loop(state: &mut State) {
-    let device = &state.backend.device;
-    let current_index = state.frame_index % mew::FRAMES_IN_FLIGHT;
+fn render_loop(renderer: &mut Renderer) {
+    let device = &renderer.backend.device;
+    let current_index = renderer.frame_index % mew::FRAMES_IN_FLIGHT;
 
-    let aspect = (state.backend.swapchain.extent.width as f32)
-        / (state.backend.swapchain.extent.height as f32);
-    let view = state.camera.get_view_matrix();
+    let aspect = (renderer.backend.swapchain.extent.width as f32)
+        / (renderer.backend.swapchain.extent.height as f32);
+    let view = renderer.camera.get_view_matrix();
     let proj = mew::get_infinite_reverse_perspective_matrix(
-        state.camera.fovy,
+        renderer.camera.fovy,
         aspect as f32,
-        state.camera.near,
+        renderer.camera.near,
     );
     let view_proj = proj * view;
 
-    let frame_resource = &state.backend.frame_resources[current_index];
+    let frame_resource = &renderer.backend.frame_resources[current_index];
     let fence = frame_resource.fence;
     unsafe {
         device.wait_for_fences(&[fence], true, 1000000000).unwrap();
@@ -424,8 +424,8 @@ fn render_loop(state: &mut State) {
 
     let swapchain_idx: usize;
     unsafe {
-        let acquire_result = state.backend.swapchain.loader.acquire_next_image(
-            state.backend.swapchain.swapchain,
+        let acquire_result = renderer.backend.swapchain.loader.acquire_next_image(
+            renderer.backend.swapchain.swapchain,
             1000000000,
             acquire_semaphore,
             Fence::null(),
@@ -436,7 +436,7 @@ fn render_loop(state: &mut State) {
                 swapchain_idx = present_idx as usize;
             }
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) | Err(vk::Result::SUBOPTIMAL_KHR) => {
-                state.backend.swapchain.dirty = true;
+                renderer.backend.swapchain.dirty = true;
                 return;
             }
             Err(e) => {
@@ -462,7 +462,7 @@ fn render_loop(state: &mut State) {
     unsafe { device.begin_command_buffer(cmd, &cmd_begin_info).unwrap() };
 
     unsafe {
-        state
+        renderer
             .backend
             .descriptor
             .sets
@@ -472,7 +472,7 @@ fn render_loop(state: &mut State) {
                 device.cmd_bind_descriptor_sets(
                     cmd,
                     vk::PipelineBindPoint::COMPUTE,
-                    state.backend.pipeline_layout,
+                    renderer.backend.pipeline_layout,
                     index as u32,
                     &[*descriptor],
                     &[],
@@ -480,7 +480,7 @@ fn render_loop(state: &mut State) {
                 device.cmd_bind_descriptor_sets(
                     cmd,
                     vk::PipelineBindPoint::GRAPHICS,
-                    state.backend.pipeline_layout,
+                    renderer.backend.pipeline_layout,
                     index as u32,
                     &[*descriptor],
                     &[],
@@ -488,7 +488,7 @@ fn render_loop(state: &mut State) {
             });
     }
 
-    if state.frame_index >= mew::FRAMES_IN_FLIGHT {
+    if renderer.frame_index >= mew::FRAMES_IN_FLIGHT {
         let mut pipeline_query_results = [0u64; CURRENT_QUERIES as usize];
         unsafe {
             device
@@ -511,7 +511,7 @@ fn render_loop(state: &mut State) {
     }
 
     let mut image_memory_barrier = vk::ImageMemoryBarrier2::default()
-        .image(state.backend.swapchain.images[swapchain_idx])
+        .image(renderer.backend.swapchain.images[swapchain_idx])
         .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
         .src_access_mask(vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE)
         .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
@@ -529,10 +529,10 @@ fn render_loop(state: &mut State) {
     let mut image_memory_barriers: Vec<vk::ImageMemoryBarrier2> = Vec::new();
     image_memory_barriers.push(image_memory_barrier);
     // draw image & depth image
-    image_memory_barrier.image = state.framebuffer.draw_image.image;
+    image_memory_barrier.image = renderer.framebuffer.draw_image.image;
     image_memory_barrier.new_layout = vk::ImageLayout::GENERAL;
     image_memory_barriers.push(image_memory_barrier);
-    image_memory_barrier.image = state.framebuffer.depth_image.image;
+    image_memory_barrier.image = renderer.framebuffer.depth_image.image;
     image_memory_barrier.new_layout = vk::ImageLayout::GENERAL;
     image_memory_barrier.subresource_range = vk::ImageSubresourceRange {
         aspect_mask: vk::ImageAspectFlags::DEPTH,
@@ -548,17 +548,17 @@ fn render_loop(state: &mut State) {
     unsafe { device.cmd_pipeline_barrier2(cmd, &dependency_info) };
 
     let renderables_count =
-        state.object_buffer.size as usize / std::mem::size_of::<mew::loader::ObjectData>();
+        renderer.object_buffer.size as usize / std::mem::size_of::<mew::loader::ObjectData>();
 
     // Pass 0 - Zero buffers
     unsafe {
-        device.cmd_fill_buffer(cmd, state.dispatch_buffer.buffer, 0, vk::WHOLE_SIZE, 0);
+        device.cmd_fill_buffer(cmd, renderer.dispatch_buffer.buffer, 0, vk::WHOLE_SIZE, 0);
     }
     giga_barrier(device, cmd);
 
     // Pass 1 - Culling
     unsafe {
-        device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, state.cull_pipeline);
+        device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, renderer.cull_pipeline);
 
         let proj_t = proj.transpose();
         let m0 = proj_t.x_axis;
@@ -587,18 +587,18 @@ fn render_loop(state: &mut State) {
         }
         let pc = PushConstants {
             view,
-            mesh_buffer: state.mesh_buffer.address,
-            object_buffer: state.object_buffer.address,
-            draw_indirect_buffer: state.draw_indirect_buffer.address,
-            dispatch_buffer: state.dispatch_buffer.address,
+            mesh_buffer: renderer.mesh_buffer.address,
+            object_buffer: renderer.object_buffer.address,
+            draw_indirect_buffer: renderer.draw_indirect_buffer.address,
+            dispatch_buffer: renderer.dispatch_buffer.address,
             planes,
             p00,
             p11,
-            near: state.camera.near,
-            far: state.camera.far,
+            near: renderer.camera.near,
+            far: renderer.camera.far,
             count: renderables_count as u32,
         };
-        mew::push_constants(&device, cmd, state.backend.pipeline_layout, &pc);
+        mew::push_constants(&device, cmd, renderer.backend.pipeline_layout, &pc);
 
         let group_count_x = mew::get_group_count(renderables_count as u32, 256);
         device.cmd_dispatch(cmd, group_count_x, 1, 1);
@@ -608,7 +608,7 @@ fn render_loop(state: &mut State) {
 
     // Pass 2 - Rasterization
     unsafe {
-        device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, state.draw_pipeline);
+        device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, renderer.draw_pipeline);
 
         let clear_value = vk::ClearValue {
             color: vk::ClearColorValue {
@@ -624,20 +624,20 @@ fn render_loop(state: &mut State) {
         };
 
         let color_attachments = [vk::RenderingAttachmentInfo::default()
-            .image_view(state.framebuffer.draw_image.view)
+            .image_view(renderer.framebuffer.draw_image.view)
             .image_layout(vk::ImageLayout::GENERAL)
             .load_op(vk::AttachmentLoadOp::CLEAR)
             .store_op(vk::AttachmentStoreOp::STORE)
             .clear_value(clear_value)];
 
         let depth_attachment = vk::RenderingAttachmentInfo::default()
-            .image_view(state.framebuffer.depth_image.view)
+            .image_view(renderer.framebuffer.depth_image.view)
             .image_layout(vk::ImageLayout::GENERAL)
             .load_op(vk::AttachmentLoadOp::CLEAR)
             .store_op(vk::AttachmentStoreOp::STORE)
             .clear_value(depth_clear_value);
 
-        let swapchain_extent = state.backend.swapchain.extent;
+        let swapchain_extent = renderer.backend.swapchain.extent;
 
         let rendering_info = vk::RenderingInfo::default()
             .render_area(vk::Rect2D {
@@ -674,13 +674,13 @@ fn render_loop(state: &mut State) {
         }
         let pc = PushConstants {
             view_proj,
-            vertex_buffer: state.vertex_buffer.address,
-            mesh_buffer: state.mesh_buffer.address,
-            object_buffer: state.object_buffer.address,
+            vertex_buffer: renderer.vertex_buffer.address,
+            mesh_buffer: renderer.mesh_buffer.address,
+            object_buffer: renderer.object_buffer.address,
         };
-        mew::push_constants(&device, cmd, state.backend.pipeline_layout, &pc);
+        mew::push_constants(&device, cmd, renderer.backend.pipeline_layout, &pc);
 
-        device.cmd_bind_index_buffer(cmd, state.index_buffer.buffer, 0, vk::IndexType::UINT32);
+        device.cmd_bind_index_buffer(cmd, renderer.index_buffer.buffer, 0, vk::IndexType::UINT32);
 
         device.cmd_begin_query(
             cmd,
@@ -691,9 +691,9 @@ fn render_loop(state: &mut State) {
 
         device.cmd_draw_indexed_indirect_count(
             cmd,
-            state.draw_indirect_buffer.buffer,
+            renderer.draw_indirect_buffer.buffer,
             0,
-            state.dispatch_buffer.buffer,
+            renderer.dispatch_buffer.buffer,
             0,
             renderables_count as u32, // There is a physical limit but for non-meshlets we are not concerned
             std::mem::size_of::<vk::DrawIndexedIndirectCommand>() as u32,
@@ -707,24 +707,24 @@ fn render_loop(state: &mut State) {
 
     // Copy to swapchain
     unsafe {
-        device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, state.copy_pipeline);
+        device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, renderer.copy_pipeline);
         #[allow(dead_code)]
         struct PushConstants {
             src_id: u32,
             dst_id: u32,
         }
         let pc = PushConstants {
-            src_id: state.framebuffer.draw_index,
-            dst_id: state.framebuffer.swapchain_indices[swapchain_idx],
+            src_id: renderer.framebuffer.draw_index,
+            dst_id: renderer.framebuffer.swapchain_indices[swapchain_idx],
         };
-        mew::push_constants(&device, cmd, state.backend.pipeline_layout, &pc);
-        let group_count_x = mew::get_group_count(state.backend.swapchain.extent.width, 8);
-        let group_count_y = mew::get_group_count(state.backend.swapchain.extent.height, 8);
+        mew::push_constants(&device, cmd, renderer.backend.pipeline_layout, &pc);
+        let group_count_x = mew::get_group_count(renderer.backend.swapchain.extent.width, 8);
+        let group_count_y = mew::get_group_count(renderer.backend.swapchain.extent.height, 8);
         device.cmd_dispatch(cmd, group_count_x, group_count_y, 1);
     }
 
     // transition to present
-    image_memory_barrier.image = state.backend.swapchain.images[swapchain_idx];
+    image_memory_barrier.image = renderer.backend.swapchain.images[swapchain_idx];
     image_memory_barrier.old_layout = vk::ImageLayout::GENERAL;
     image_memory_barrier.new_layout = vk::ImageLayout::PRESENT_SRC_KHR;
     image_memory_barrier.subresource_range = vk::ImageSubresourceRange {
@@ -751,7 +751,7 @@ fn render_loop(state: &mut State) {
         .value(1)
         .stage_mask(vk::PipelineStageFlags2::ALL_GRAPHICS);
 
-    let render_semaphore = state.backend.render_done_semaphores[swapchain_idx];
+    let render_semaphore = renderer.backend.render_done_semaphores[swapchain_idx];
     let semaphore_signal_info = vk::SemaphoreSubmitInfo::default()
         .semaphore(render_semaphore)
         .value(1)
@@ -762,7 +762,7 @@ fn render_loop(state: &mut State) {
     let semaphore_wait_info = [semaphore_wait_info];
     let cmd_submit_info = [cmd_submit_info];
     let swapchain_idx = [swapchain_idx as u32];
-    let swapchain = [state.backend.swapchain.swapchain];
+    let swapchain = [renderer.backend.swapchain.swapchain];
 
     let submit_info = vk::SubmitInfo2::default()
         .signal_semaphore_infos(&semaphore_signal_info)
@@ -771,7 +771,7 @@ fn render_loop(state: &mut State) {
 
     unsafe {
         device
-            .queue_submit2(state.backend.graphics_queue, &[submit_info], fence)
+            .queue_submit2(renderer.backend.graphics_queue, &[submit_info], fence)
             .unwrap();
     }
 
@@ -781,16 +781,16 @@ fn render_loop(state: &mut State) {
         .swapchains(&swapchain);
 
     unsafe {
-        let present_result = state
+        let present_result = renderer
             .backend
             .swapchain
             .loader
-            .queue_present(state.backend.graphics_queue, &present_info);
+            .queue_present(renderer.backend.graphics_queue, &present_info);
 
         match present_result {
             Ok(_) => {}
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) | Err(vk::Result::SUBOPTIMAL_KHR) => {
-                state.backend.swapchain.dirty = true;
+                renderer.backend.swapchain.dirty = true;
                 return;
             }
             Err(e) => {
@@ -799,24 +799,24 @@ fn render_loop(state: &mut State) {
         }
     };
 
-    state.frame_index += 1;
+    renderer.frame_index += 1;
 }
 
 // This is project specific
-fn recreate_resources_on_swapchain_resize(state: &mut State) {
-    let device = &state.backend.device;
+fn recreate_resources_on_swapchain_resize(renderer: &mut Renderer) {
+    let device = &renderer.backend.device;
 
-    let mut allocator = state.backend.allocator.lock().unwrap();
+    let mut allocator = renderer.backend.allocator.lock().unwrap();
 
     // Destroy outdated resources
-    mew::destroy_image(device, &mut allocator, &mut state.framebuffer.draw_image);
-    mew::destroy_image(device, &mut allocator, &mut state.framebuffer.depth_image);
+    mew::destroy_image(device, &mut allocator, &mut renderer.framebuffer.draw_image);
+    mew::destroy_image(device, &mut allocator, &mut renderer.framebuffer.depth_image);
 
     // Recreate resources
-    state.framebuffer.draw_image = mew::create_image(
+    renderer.framebuffer.draw_image = mew::create_image(
         &device,
         &mut allocator,
-        state.backend.swapchain.extent,
+        renderer.backend.swapchain.extent,
         vk::Format::R16G16B16A16_SFLOAT,
         vk::ImageUsageFlags::STORAGE
             | vk::ImageUsageFlags::TRANSFER_SRC
@@ -825,10 +825,10 @@ fn recreate_resources_on_swapchain_resize(state: &mut State) {
         false,
     );
 
-    state.framebuffer.depth_image = mew::create_image(
+    renderer.framebuffer.depth_image = mew::create_image(
         &device,
         &mut allocator,
-        state.backend.swapchain.extent,
+        renderer.backend.swapchain.extent,
         vk::Format::D32_SFLOAT,
         vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
         vk::ImageAspectFlags::DEPTH,
@@ -836,19 +836,19 @@ fn recreate_resources_on_swapchain_resize(state: &mut State) {
     );
 
     // Update descriptors
-    state.backend.update_image_descriptor(
-        state.framebuffer.draw_index,
-        state.framebuffer.draw_image.view,
+    renderer.backend.update_image_descriptor(
+        renderer.framebuffer.draw_index,
+        renderer.framebuffer.draw_image.view,
         RenderResourceTag::Storage,
     );
 
-    for (index, view) in state
+    for (index, view) in renderer
         .framebuffer
         .swapchain_indices
         .iter()
-        .zip(state.backend.swapchain.views.iter())
+        .zip(renderer.backend.swapchain.views.iter())
     {
-        state
+        renderer
             .backend
             .update_image_descriptor(*index, *view, RenderResourceTag::Storage);
     }
@@ -862,5 +862,5 @@ fn main() {
     let event_loop = EventLoop::new().unwrap();
 
     event_loop.set_control_flow(ControlFlow::Poll);
-    event_loop.run_app(&mut App { state: None }).unwrap();
+    event_loop.run_app(&mut App { renderer: None }).unwrap();
 }
