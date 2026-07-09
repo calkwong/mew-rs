@@ -4,7 +4,7 @@ use ash::{
     Device, Entry, Instance,
     ext::debug_utils,
     khr::surface,
-    vk::{self, DebugUtilsMessengerEXT, Queue},
+    vk::{self, DebugUtilsMessengerEXT, Queue, Semaphore},
 };
 use ash_window;
 use gpu_allocator::MemoryLocation;
@@ -33,10 +33,11 @@ use swapchain::Swapchain;
 use crate::swapchain::create_swapchain;
 
 pub const FRAMES_IN_FLIGHT: usize = 2;
+pub const MAX_QUERY_COUNT: u32 = 10;
 const MAX_PUSH_CONSTANTS_SIZE: u32 = 256;
 
 #[derive(Default, Copy, Clone)]
-pub struct FrameData {
+pub struct FrameResources {
     pub command_pool: vk::CommandPool,
     pub command_buffer: vk::CommandBuffer,
     pub fence: vk::Fence,
@@ -69,6 +70,10 @@ pub struct Engine {
     pub queue_family_index: u32,
     pub graphics_queue: Queue,
     pub allocator: ManuallyDrop<Arc<Mutex<Allocator>>>,
+
+    pub frame_resources: [FrameResources; FRAMES_IN_FLIGHT],
+    // TODO: put swapchain and render_done_semaphore together?
+    pub render_done_semaphores: Vec<Semaphore>,
     pub swapchain: Swapchain,
     pub descriptor: descriptors::Descriptor,
     pub pipeline_layout: vk::PipelineLayout,
@@ -78,10 +83,8 @@ pub struct Engine {
 }
 
 impl Engine {
-    pub fn new(window: Option<&Window>) -> Self {
+    pub fn new(window: &Window) -> Self {
         let entry = Entry::linked();
-
-        let window = window.unwrap();
 
         // CursorGrabMode::Locked not supported on X11
         // If we fallback to Confined, we get choppy rendering possibly related: https://github.com/rust-windowing/winit/issues/3773
@@ -425,6 +428,70 @@ impl Engine {
         let descriptor =
             descriptors::Descriptor::new(descriptor_pool, descriptor_sets, descriptor_layouts);
 
+        // Prepare frame resources
+        let mut frame_resources: [FrameResources; FRAMES_IN_FLIGHT] =
+            [FrameResources::default(); FRAMES_IN_FLIGHT];
+
+        let command_pool_info =
+            vk::CommandPoolCreateInfo::default().queue_family_index(queue_family_index);
+
+        unsafe {
+            (0..FRAMES_IN_FLIGHT).for_each(|i| {
+                frame_resources[i].command_pool = device
+                    .create_command_pool(&command_pool_info, None)
+                    .unwrap();
+            });
+        }
+
+        unsafe {
+            (0..FRAMES_IN_FLIGHT).for_each(|i| {
+                let pool = &frame_resources[i].command_pool;
+
+                let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::default()
+                    .command_pool(*pool)
+                    .level(vk::CommandBufferLevel::PRIMARY)
+                    .command_buffer_count(1);
+
+                frame_resources[i].command_buffer = device
+                    .allocate_command_buffers(&command_buffer_allocate_info)
+                    .unwrap()[0];
+            });
+        }
+
+        let fence_info = vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
+
+        unsafe {
+            (0..FRAMES_IN_FLIGHT).for_each(|i| {
+                frame_resources[i].fence = device.create_fence(&fence_info, None).unwrap();
+            });
+        }
+
+        let semaphore_info = vk::SemaphoreCreateInfo::default();
+
+        unsafe {
+            (0..FRAMES_IN_FLIGHT).for_each(|i| {
+                frame_resources[i].image_acquired_semaphore =
+                    device.create_semaphore(&semaphore_info, None).unwrap()
+            });
+        }
+
+        let render_done_semaphores: Vec<vk::Semaphore> = unsafe {
+            (0..swapchain.images.len())
+                .map(|_| device.create_semaphore(&semaphore_info, None).unwrap())
+                .collect()
+        };
+
+        let query_info = vk::QueryPoolCreateInfo::default()
+            .query_type(vk::QueryType::PIPELINE_STATISTICS)
+            .query_count(MAX_QUERY_COUNT)
+            .pipeline_statistics(vk::QueryPipelineStatisticFlags::CLIPPING_INVOCATIONS);
+
+        unsafe {
+            (0..FRAMES_IN_FLIGHT).for_each(|i| {
+                frame_resources[i].pipeline_query = device.create_query_pool(&query_info, None).unwrap();
+            });
+        }
+
         Self {
             entry,
             instance,
@@ -435,6 +502,8 @@ impl Engine {
             queue_family_index,
             graphics_queue,
             allocator: ManuallyDrop::new(Arc::new(Mutex::new(allocator))),
+            frame_resources,
+            render_done_semaphores,
             swapchain,
             descriptor,
             pipeline_layout,
@@ -554,6 +623,10 @@ impl Drop for Engine {
             swapchain
                 .loader
                 .destroy_swapchain(swapchain.swapchain, None);
+
+            self.render_done_semaphores.iter().for_each(|semaphore| {
+                self.device.destroy_semaphore(*semaphore, None);
+            });
 
             swapchain.views.iter().for_each(|image_view| {
                 self.device.destroy_image_view(*image_view, None);
