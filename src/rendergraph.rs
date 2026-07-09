@@ -3,12 +3,12 @@
 // Does not support resource aliasing or arbitrary pass reordering
 #![allow(dead_code)]
 use ash::vk;
-use std::collections::HashMap;
+use std::{collections::HashMap, marker::PhantomData};
 
 use crate as mew;
 use mew::Image;
 
-struct Graph<'a> {
+pub struct Graph<'a> {
     resource_to_id: HashMap<&'a str, usize>,
     resource_states: Vec<ResourceState<'a>>,
     dependencies: Vec<Vec<usize>>,
@@ -23,7 +23,7 @@ struct ResourceState<'a> {
 }
 
 impl<'a> Graph<'a> {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             resource_to_id: HashMap::new(),
             resource_states: Vec::new(),
@@ -33,7 +33,7 @@ impl<'a> Graph<'a> {
         }
     }
 
-    fn add_pass(&mut self, pass: Pass<'a, RenderPass>) {
+    pub fn add_pass<T>(&mut self, pass: Pass<'a, T>) {
         let pass_id = self.dependencies.len();
         self.dependencies.push(Vec::new());
 
@@ -114,18 +114,18 @@ impl<'a> Graph<'a> {
         level
     }
 
-    fn compile(&mut self) {
+    pub fn compile(&mut self) {
         self.build_execution_groups();
     }
 
-    fn run(&self) {
+    pub fn run(&self) {
         for group in &self.execution_groups {
             if group.len() > 0 {
                 for execute_id in group {
                     match self.executes[*execute_id] {
                         // TODO:
-                        RenderPass::ComputePass(_) => {}
-                        RenderPass::GraphicsPass(_) => {}
+                        RenderPass::Compute(_) => {}
+                        RenderPass::Graphics(_) => {}
                     }
                 }
             } else {
@@ -135,25 +135,27 @@ impl<'a> Graph<'a> {
     }
 }
 
-enum RenderPass {
-    ComputePass(ComputePass),
-    GraphicsPass(GraphicsPass),
+pub enum RenderPass {
+    Compute(ComputePass),
+    Graphics(GraphicsPass),
 }
 
-struct Pass<'a, RenderPass> {
+pub struct Pass<'a, T> {
     reads: Vec<&'a str>,
     writes: Vec<&'a str>,
+    // TODO: this is fragile, can we do better than inlining 256 bytes?
     constants: &'a [u8],
     render_pass: RenderPass,
+    _marker: PhantomData<T>,
 }
 
-impl<'a> Pass<'a, RenderPass> {
-    fn add_read(mut self, name: &'a str) -> Self {
+impl<'a, T> Pass<'a, T> {
+    pub fn read(mut self, name: &'a str) -> Self {
         self.reads.push(name);
         self
     }
 
-    fn add_write(mut self, name: &'a str) -> Self {
+    pub fn write(mut self, name: &'a str) -> Self {
         self.writes.push(name);
 
         // This handles WAW
@@ -161,20 +163,40 @@ impl<'a> Pass<'a, RenderPass> {
         self.reads.push(name);
         self
     }
+
+    pub fn constants(mut self, data: &'a [u8]) -> Self {
+        self.constants = data;
+        self
+    }
 }
 
 // TODO: dispatch_indirect variant
-struct ComputePass {
+pub struct ComputePass {
     x: u32,
     y: u32,
     z: u32,
 }
 
 impl<'a> Pass<'a, ComputePass> {
-    pub fn dispatch(mut self, x: u32, y: u32, z: u32) {
-        self.render_pass.x = x;
-        self.render_pass.y = y;
-        self.render_pass.z = z;
+    pub fn new_compute() -> Self {
+        Self {
+            reads: Vec::new(),
+            writes: Vec::new(),
+            constants: &[],
+            render_pass: RenderPass::Compute(ComputePass { x: 0, y: 0, z: 0 }),
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn dispatch(mut self, x: u32, y: u32, z: u32) -> Self {
+        if let RenderPass::Compute(data) = &mut self.render_pass {
+            data.x = x;
+            data.y = y;
+            data.z = z;
+        } else {
+            panic!("Dispatch called on wrong render pass type");
+        }
+        self
     }
 }
 
@@ -191,24 +213,53 @@ pub struct GraphicsPass {
 }
 
 impl<'a> Pass<'a, GraphicsPass> {
-    pub fn render_target(mut self, image: &Image, load_op: vk::AttachmentLoadOp) {
-        self.render_pass.render_targets.push(AttachmentDesc {
-            view: image.view,
-            load_op,
-        });
+    pub fn new_graphics() -> Self {
+        Self {
+            reads: Vec::new(),
+            writes: Vec::new(),
+            constants: &[],
+            render_pass: RenderPass::Graphics(GraphicsPass {
+                render_targets: Vec::new(),
+                depth_target: None,
+                custom: Box::new(|| {}),
+            }),
+            _marker: PhantomData,
+        }
     }
 
-    pub fn depth_target(mut self, image: &Image, load_op: vk::AttachmentLoadOp) {
-        self.render_pass.depth_target = Some(AttachmentDesc {
-            view: image.view,
-            load_op,
-        });
+    pub fn render_target(mut self, image: &Image, load_op: vk::AttachmentLoadOp) -> Self {
+        if let RenderPass::Graphics(data) = &mut self.render_pass {
+            data.render_targets.push(AttachmentDesc {
+                view: image.view,
+                load_op,
+            });
+        } else {
+            panic!("Render target called on wrong render pass type");
+        }
+        self
     }
 
-    pub fn custom<F>(mut self, f: F)
+    pub fn depth_target(mut self, image: &Image, load_op: vk::AttachmentLoadOp) -> Self {
+        if let RenderPass::Graphics(data) = &mut self.render_pass {
+            data.depth_target = Some(AttachmentDesc {
+                view: image.view,
+                load_op,
+            });
+        } else {
+            panic!("Depth target called on wrong render pass type");
+        }
+        self
+    }
+
+    pub fn custom<F>(mut self, f: F) -> Self
     where
         F: Fn() + 'static,
     {
-        self.render_pass.custom = Box::new(f);
+        if let RenderPass::Graphics(data) = &mut self.render_pass {
+            data.custom = Box::new(f);
+        } else {
+            panic!("Custom called on wrong render pass type");
+        }
+        self
     }
 }
