@@ -22,6 +22,7 @@ use winit::{
 pub mod camera;
 pub mod loader;
 
+pub mod rendergraph;
 pub mod descriptors;
 use descriptors::{RenderResourceTag, get_descriptor_index};
 
