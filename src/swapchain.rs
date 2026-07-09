@@ -1,11 +1,11 @@
 use ash::{
-    Device, Instance,
+    Instance,
     khr::{surface, swapchain},
     vk::{self, SwapchainKHR},
 };
 
 use crate as mew;
-use mew::Engine;
+use mew::Device;
 
 use winit::window::Window;
 
@@ -24,7 +24,7 @@ pub fn create_swapchain(
     surface_loader: &surface::Instance,
     surface: vk::SurfaceKHR,
     pdevice: vk::PhysicalDevice,
-    device: &Device,
+    device: &ash::Device,
     window: &Window,
     old_handle: vk::SwapchainKHR,
 ) -> Swapchain {
@@ -124,31 +124,31 @@ pub fn create_swapchain(
     }
 }
 
-pub fn recreate_swapchain(engine: &mut Engine, window: &Window) {
+pub fn recreate_swapchain(device: &mut Device, window: &Window) {
     unsafe {
-        engine.device.device_wait_idle().unwrap();
+        device.device.device_wait_idle().unwrap();
     }
 
     unsafe {
-        for view in &engine.swapchain.views {
-            engine.device.destroy_image_view(*view, None);
+        for view in &device.swapchain.views {
+            device.device.destroy_image_view(*view, None);
         }
     }
 
-    let old_handle = engine.swapchain.swapchain;
+    let old_handle = device.swapchain.swapchain;
 
-    engine.swapchain = create_swapchain(
-        &engine.instance,
-        &engine.surface_loader,
-        engine.surface,
-        engine.physical_device,
-        &engine.device,
+    device.swapchain = create_swapchain(
+        &device.instance,
+        &device.surface_loader,
+        device.surface,
+        device.physical_device,
+        &device.device,
         window,
         old_handle,
     );
 
     unsafe {
-        engine.swapchain.loader.destroy_swapchain(old_handle, None);
+        device.swapchain.loader.destroy_swapchain(old_handle, None);
     }
 }
 

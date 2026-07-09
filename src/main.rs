@@ -19,17 +19,17 @@ const CURRENT_QUERIES: u32 = 1;
 
 struct State {
     window: Window,
+    backend: mew::Device,
+
     camera: Camera,
-
     last_frame_time: Option<Instant>,
-    engine: mew::Engine,
-    framebuffer: Framebuffer,
-
     frame_index: usize,
 
     copy_pipeline: vk::Pipeline,
     draw_pipeline: vk::Pipeline,
     cull_pipeline: vk::Pipeline,
+
+    framebuffer: Framebuffer,
 
     vertex_buffer: mew::Buffer,
     index_buffer: mew::Buffer,
@@ -48,19 +48,19 @@ struct Framebuffer {
 
 impl State {
     fn new(window: Window) -> Self {
-        let engine = mew::Engine::new(&window);
+        let backend = mew::Device::new(&window);
 
         let camera = Camera::default().position(glam::Vec3::new(0.0, 0.0, 5.0));
 
-        let device = &engine.device;
+        let device = &backend.device;
 
-        let allocator = (*engine.allocator).clone();
+        let allocator = (*backend.allocator).clone();
         let mut allocator = &mut allocator.lock().unwrap();
 
         let draw_image = mew::create_image(
             &device,
             &mut allocator,
-            engine.swapchain.extent,
+            backend.swapchain.extent,
             vk::Format::R16G16B16A16_SFLOAT,
             vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_SRC,
             vk::ImageAspectFlags::COLOR,
@@ -70,20 +70,20 @@ impl State {
         let depth_image = mew::create_image(
             &device,
             &mut allocator,
-            engine.swapchain.extent,
+            backend.swapchain.extent,
             vk::Format::D32_SFLOAT,
             vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
             vk::ImageAspectFlags::DEPTH,
             false,
         );
 
-        let draw_index = engine.register_image(draw_image.view, RenderResourceTag::Storage);
+        let draw_index = backend.register_image(draw_image.view, RenderResourceTag::Storage);
 
-        let swapchain_indices: Vec<u32> = engine
+        let swapchain_indices: Vec<u32> = backend
             .swapchain
             .views
             .iter()
-            .map(|view| engine.register_image(*view, RenderResourceTag::Storage))
+            .map(|view| backend.register_image(*view, RenderResourceTag::Storage))
             .collect();
 
         let copy_shader = mew::load_shader(device, "shaders/compiled/copy_swapchain.spv");
@@ -91,12 +91,12 @@ impl State {
         let cull_shader = mew::load_shader(device, "shaders/compiled/culling.spv");
 
         let cull_pipeline =
-            mew::create_compute_pipeline(&device, engine.pipeline_layout, cull_shader);
+            mew::create_compute_pipeline(&device, backend.pipeline_layout, cull_shader);
         let copy_pipeline =
-            mew::create_compute_pipeline(&device, engine.pipeline_layout, copy_shader);
+            mew::create_compute_pipeline(&device, backend.pipeline_layout, copy_shader);
         let draw_pipeline = mew::create_graphics_pipeline(
             &device,
-            engine.pipeline_layout,
+            backend.pipeline_layout,
             draw_shader,
             &[vk::ShaderStageFlags::VERTEX, vk::ShaderStageFlags::FRAGMENT],
             draw_image.format,
@@ -114,9 +114,9 @@ impl State {
         let vertices = mew::as_bytes(&scene.vertices);
         let vertex_buffer = mew::create_buffer_with_data(
             device,
-            engine.graphics_queue,
-            engine.frame_resources[0].command_pool,
-            engine.frame_resources[0].command_buffer,
+            backend.graphics_queue,
+            backend.frame_resources[0].command_pool,
+            backend.frame_resources[0].command_buffer,
             &mut allocator,
             vk::BufferUsageFlags::STORAGE_BUFFER
                 | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
@@ -128,9 +128,9 @@ impl State {
         let indices = mew::as_bytes(&scene.indices);
         let index_buffer = mew::create_buffer_with_data(
             device,
-            engine.graphics_queue,
-            engine.frame_resources[0].command_pool,
-            engine.frame_resources[0].command_buffer,
+            backend.graphics_queue,
+            backend.frame_resources[0].command_pool,
+            backend.frame_resources[0].command_buffer,
             &mut allocator,
             vk::BufferUsageFlags::STORAGE_BUFFER
                 | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
@@ -143,9 +143,9 @@ impl State {
         let meshes = mew::as_bytes(&scene.meshes);
         let mesh_buffer = mew::create_buffer_with_data(
             device,
-            engine.graphics_queue,
-            engine.frame_resources[0].command_pool,
-            engine.frame_resources[0].command_buffer,
+            backend.graphics_queue,
+            backend.frame_resources[0].command_pool,
+            backend.frame_resources[0].command_buffer,
             &mut allocator,
             vk::BufferUsageFlags::STORAGE_BUFFER
                 | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
@@ -157,9 +157,9 @@ impl State {
         let objects = mew::as_bytes(&scene.renderables);
         let object_buffer = mew::create_buffer_with_data(
             device,
-            engine.graphics_queue,
-            engine.frame_resources[0].command_pool,
-            engine.frame_resources[0].command_buffer,
+            backend.graphics_queue,
+            backend.frame_resources[0].command_pool,
+            backend.frame_resources[0].command_buffer,
             &mut allocator,
             vk::BufferUsageFlags::STORAGE_BUFFER
                 | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
@@ -192,19 +192,19 @@ impl State {
 
         let this = Self {
             window,
+            backend,
             camera,
             last_frame_time: None,
-            engine,
+            frame_index: 0,
+            copy_pipeline,
+            draw_pipeline,
+            cull_pipeline,
             framebuffer: Framebuffer {
                 draw_image,
                 depth_image,
                 draw_index,
                 swapchain_indices,
             },
-            frame_index: 0,
-            copy_pipeline,
-            draw_pipeline,
-            cull_pipeline,
             vertex_buffer,
             index_buffer,
             mesh_buffer,
@@ -219,17 +219,17 @@ impl State {
 
 impl Drop for State {
     fn drop(&mut self) {
-        let device = &self.engine.device;
+        let device = &self.backend.device;
 
         unsafe {
-            self.engine.frame_resources.iter().for_each(|data| {
+            self.backend.frame_resources.iter().for_each(|data| {
                 device.destroy_command_pool(data.command_pool, None);
                 device.destroy_fence(data.fence, None);
                 device.destroy_semaphore(data.image_acquired_semaphore, None);
                 device.destroy_query_pool(data.pipeline_query, None);
             });
 
-            let mut allocator = self.engine.allocator.lock().unwrap();
+            let mut allocator = self.backend.allocator.lock().unwrap();
 
             // Destroy resources
             mew::destroy_image(device, &mut allocator, &mut self.framebuffer.draw_image);
@@ -304,7 +304,7 @@ impl ApplicationHandler for App {
             // This should be providing us with new dims, but it's returning outdated dims which can cause OOB surface extent - possibly Niri specific?
             winit::event::WindowEvent::Resized(_) => {
                 if let Some(state) = self.state.as_mut() {
-                    recreate_swapchain(&mut state.engine, &state.window);
+                    recreate_swapchain(&mut state.backend, &state.window);
                     recreate_resources_on_swapchain_resize(state);
 
                     let window_size = state.window.inner_size();
@@ -318,8 +318,8 @@ impl ApplicationHandler for App {
                 if let Some(state) = self.state.as_mut() {
                     render_loop(state);
 
-                    if state.engine.swapchain.dirty {
-                        recreate_swapchain(&mut state.engine, &state.window);
+                    if state.backend.swapchain.dirty {
+                        recreate_swapchain(&mut state.backend, &state.window);
                         recreate_resources_on_swapchain_resize(state);
 
                         let window_size = state.window.inner_size();
@@ -393,7 +393,7 @@ impl ApplicationHandler for App {
 
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
         if let Some(state) = self.state.as_ref() {
-            unsafe { state.engine.device.device_wait_idle().unwrap() };
+            unsafe { state.backend.device.device_wait_idle().unwrap() };
         }
 
         self.state = None;
@@ -401,11 +401,11 @@ impl ApplicationHandler for App {
 }
 
 fn render_loop(state: &mut State) {
-    let device = &state.engine.device;
+    let device = &state.backend.device;
     let current_index = state.frame_index % mew::FRAMES_IN_FLIGHT;
 
-    let aspect = (state.engine.swapchain.extent.width as f32)
-        / (state.engine.swapchain.extent.height as f32);
+    let aspect = (state.backend.swapchain.extent.width as f32)
+        / (state.backend.swapchain.extent.height as f32);
     let view = state.camera.get_view_matrix();
     let proj = mew::get_infinite_reverse_perspective_matrix(
         state.camera.fovy,
@@ -414,7 +414,7 @@ fn render_loop(state: &mut State) {
     );
     let view_proj = proj * view;
 
-    let frame_resource = &state.engine.frame_resources[current_index];
+    let frame_resource = &state.backend.frame_resources[current_index];
     let fence = frame_resource.fence;
     unsafe {
         device.wait_for_fences(&[fence], true, 1000000000).unwrap();
@@ -424,8 +424,8 @@ fn render_loop(state: &mut State) {
 
     let swapchain_idx: usize;
     unsafe {
-        let acquire_result = state.engine.swapchain.loader.acquire_next_image(
-            state.engine.swapchain.swapchain,
+        let acquire_result = state.backend.swapchain.loader.acquire_next_image(
+            state.backend.swapchain.swapchain,
             1000000000,
             acquire_semaphore,
             Fence::null(),
@@ -436,7 +436,7 @@ fn render_loop(state: &mut State) {
                 swapchain_idx = present_idx as usize;
             }
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) | Err(vk::Result::SUBOPTIMAL_KHR) => {
-                state.engine.swapchain.dirty = true;
+                state.backend.swapchain.dirty = true;
                 return;
             }
             Err(e) => {
@@ -463,7 +463,7 @@ fn render_loop(state: &mut State) {
 
     unsafe {
         state
-            .engine
+            .backend
             .descriptor
             .sets
             .iter()
@@ -472,7 +472,7 @@ fn render_loop(state: &mut State) {
                 device.cmd_bind_descriptor_sets(
                     cmd,
                     vk::PipelineBindPoint::COMPUTE,
-                    state.engine.pipeline_layout,
+                    state.backend.pipeline_layout,
                     index as u32,
                     &[*descriptor],
                     &[],
@@ -480,7 +480,7 @@ fn render_loop(state: &mut State) {
                 device.cmd_bind_descriptor_sets(
                     cmd,
                     vk::PipelineBindPoint::GRAPHICS,
-                    state.engine.pipeline_layout,
+                    state.backend.pipeline_layout,
                     index as u32,
                     &[*descriptor],
                     &[],
@@ -511,7 +511,7 @@ fn render_loop(state: &mut State) {
     }
 
     let mut image_memory_barrier = vk::ImageMemoryBarrier2::default()
-        .image(state.engine.swapchain.images[swapchain_idx])
+        .image(state.backend.swapchain.images[swapchain_idx])
         .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
         .src_access_mask(vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE)
         .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
@@ -598,7 +598,7 @@ fn render_loop(state: &mut State) {
             far: state.camera.far,
             count: renderables_count as u32,
         };
-        mew::push_constants(&device, cmd, state.engine.pipeline_layout, &pc);
+        mew::push_constants(&device, cmd, state.backend.pipeline_layout, &pc);
 
         let group_count_x = mew::get_group_count(renderables_count as u32, 256);
         device.cmd_dispatch(cmd, group_count_x, 1, 1);
@@ -637,7 +637,7 @@ fn render_loop(state: &mut State) {
             .store_op(vk::AttachmentStoreOp::STORE)
             .clear_value(depth_clear_value);
 
-        let swapchain_extent = state.engine.swapchain.extent;
+        let swapchain_extent = state.backend.swapchain.extent;
 
         let rendering_info = vk::RenderingInfo::default()
             .render_area(vk::Rect2D {
@@ -678,7 +678,7 @@ fn render_loop(state: &mut State) {
             mesh_buffer: state.mesh_buffer.address,
             object_buffer: state.object_buffer.address,
         };
-        mew::push_constants(&device, cmd, state.engine.pipeline_layout, &pc);
+        mew::push_constants(&device, cmd, state.backend.pipeline_layout, &pc);
 
         device.cmd_bind_index_buffer(cmd, state.index_buffer.buffer, 0, vk::IndexType::UINT32);
 
@@ -717,14 +717,14 @@ fn render_loop(state: &mut State) {
             src_id: state.framebuffer.draw_index,
             dst_id: state.framebuffer.swapchain_indices[swapchain_idx],
         };
-        mew::push_constants(&device, cmd, state.engine.pipeline_layout, &pc);
-        let group_count_x = mew::get_group_count(state.engine.swapchain.extent.width, 8);
-        let group_count_y = mew::get_group_count(state.engine.swapchain.extent.height, 8);
+        mew::push_constants(&device, cmd, state.backend.pipeline_layout, &pc);
+        let group_count_x = mew::get_group_count(state.backend.swapchain.extent.width, 8);
+        let group_count_y = mew::get_group_count(state.backend.swapchain.extent.height, 8);
         device.cmd_dispatch(cmd, group_count_x, group_count_y, 1);
     }
 
     // transition to present
-    image_memory_barrier.image = state.engine.swapchain.images[swapchain_idx];
+    image_memory_barrier.image = state.backend.swapchain.images[swapchain_idx];
     image_memory_barrier.old_layout = vk::ImageLayout::GENERAL;
     image_memory_barrier.new_layout = vk::ImageLayout::PRESENT_SRC_KHR;
     image_memory_barrier.subresource_range = vk::ImageSubresourceRange {
@@ -751,7 +751,7 @@ fn render_loop(state: &mut State) {
         .value(1)
         .stage_mask(vk::PipelineStageFlags2::ALL_GRAPHICS);
 
-    let render_semaphore = state.engine.render_done_semaphores[swapchain_idx];
+    let render_semaphore = state.backend.render_done_semaphores[swapchain_idx];
     let semaphore_signal_info = vk::SemaphoreSubmitInfo::default()
         .semaphore(render_semaphore)
         .value(1)
@@ -762,7 +762,7 @@ fn render_loop(state: &mut State) {
     let semaphore_wait_info = [semaphore_wait_info];
     let cmd_submit_info = [cmd_submit_info];
     let swapchain_idx = [swapchain_idx as u32];
-    let swapchain = [state.engine.swapchain.swapchain];
+    let swapchain = [state.backend.swapchain.swapchain];
 
     let submit_info = vk::SubmitInfo2::default()
         .signal_semaphore_infos(&semaphore_signal_info)
@@ -771,7 +771,7 @@ fn render_loop(state: &mut State) {
 
     unsafe {
         device
-            .queue_submit2(state.engine.graphics_queue, &[submit_info], fence)
+            .queue_submit2(state.backend.graphics_queue, &[submit_info], fence)
             .unwrap();
     }
 
@@ -782,15 +782,15 @@ fn render_loop(state: &mut State) {
 
     unsafe {
         let present_result = state
-            .engine
+            .backend
             .swapchain
             .loader
-            .queue_present(state.engine.graphics_queue, &present_info);
+            .queue_present(state.backend.graphics_queue, &present_info);
 
         match present_result {
             Ok(_) => {}
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) | Err(vk::Result::SUBOPTIMAL_KHR) => {
-                state.engine.swapchain.dirty = true;
+                state.backend.swapchain.dirty = true;
                 return;
             }
             Err(e) => {
@@ -804,9 +804,9 @@ fn render_loop(state: &mut State) {
 
 // This is project specific
 fn recreate_resources_on_swapchain_resize(state: &mut State) {
-    let device = &state.engine.device;
+    let device = &state.backend.device;
 
-    let mut allocator = state.engine.allocator.lock().unwrap();
+    let mut allocator = state.backend.allocator.lock().unwrap();
 
     // Destroy outdated resources
     mew::destroy_image(device, &mut allocator, &mut state.framebuffer.draw_image);
@@ -816,7 +816,7 @@ fn recreate_resources_on_swapchain_resize(state: &mut State) {
     state.framebuffer.draw_image = mew::create_image(
         &device,
         &mut allocator,
-        state.engine.swapchain.extent,
+        state.backend.swapchain.extent,
         vk::Format::R16G16B16A16_SFLOAT,
         vk::ImageUsageFlags::STORAGE
             | vk::ImageUsageFlags::TRANSFER_SRC
@@ -828,7 +828,7 @@ fn recreate_resources_on_swapchain_resize(state: &mut State) {
     state.framebuffer.depth_image = mew::create_image(
         &device,
         &mut allocator,
-        state.engine.swapchain.extent,
+        state.backend.swapchain.extent,
         vk::Format::D32_SFLOAT,
         vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
         vk::ImageAspectFlags::DEPTH,
@@ -836,7 +836,7 @@ fn recreate_resources_on_swapchain_resize(state: &mut State) {
     );
 
     // Update descriptors
-    state.engine.update_image_descriptor(
+    state.backend.update_image_descriptor(
         state.framebuffer.draw_index,
         state.framebuffer.draw_image.view,
         RenderResourceTag::Storage,
@@ -846,10 +846,10 @@ fn recreate_resources_on_swapchain_resize(state: &mut State) {
         .framebuffer
         .swapchain_indices
         .iter()
-        .zip(state.engine.swapchain.views.iter())
+        .zip(state.backend.swapchain.views.iter())
     {
         state
-            .engine
+            .backend
             .update_image_descriptor(*index, *view, RenderResourceTag::Storage);
     }
 }

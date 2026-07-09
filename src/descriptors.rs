@@ -1,4 +1,4 @@
-use ash::{Device, vk};
+use ash::vk;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -48,7 +48,7 @@ impl Descriptor {
         }
     }
 
-    pub fn destroy(&self, device: &Device) {
+    pub fn destroy(&self, device: &ash::Device) {
         unsafe {
             device.destroy_descriptor_pool(self.pool, None);
             for layout in self.layouts {
@@ -68,7 +68,7 @@ pub fn get_descriptor_index(tag: RenderResourceTag) -> usize {
 }
 
 pub fn create_descriptor_pool(
-    device: &Device,
+    device: &ash::Device,
     pool_size: &[vk::DescriptorPoolSize],
 ) -> vk::DescriptorPool {
     let descriptor_pool_info = vk::DescriptorPoolCreateInfo::default()
@@ -83,7 +83,7 @@ pub fn create_descriptor_pool(
 }
 
 pub fn create_descriptor_layouts(
-    device: &Device,
+    device: &ash::Device,
     binding: vk::DescriptorSetLayoutBinding,
     binding_flags: &[vk::DescriptorBindingFlags],
 ) -> vk::DescriptorSetLayout {
@@ -104,7 +104,7 @@ pub fn create_descriptor_layouts(
 }
 
 pub fn create_descriptor_sets(
-    device: &Device,
+    device: &ash::Device,
     pool: vk::DescriptorPool,
     layout: vk::DescriptorSetLayout,
     descriptor_counts: u32,

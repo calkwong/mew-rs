@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use ash::{
-    Device, Entry, Instance,
+    Entry, Instance,
     ext::debug_utils,
     khr::surface,
     vk::{self, DebugUtilsMessengerEXT, Queue, Semaphore},
@@ -60,29 +60,30 @@ pub struct Buffer {
     pub size: vk::DeviceSize,
 }
 
-pub struct Engine {
-    pub entry: Entry,
-    pub instance: Instance,
-    pub surface: vk::SurfaceKHR,
-    pub surface_loader: surface::Instance,
+pub struct Device {
+    pub device: ash::Device,
     pub physical_device: vk::PhysicalDevice,
-    pub device: Device,
-    pub queue_family_index: u32,
+    pub instance: Instance,
     pub graphics_queue: Queue,
+    pub properties: vk::PhysicalDeviceProperties,
     pub allocator: ManuallyDrop<Arc<Mutex<Allocator>>>,
-
     pub frame_resources: [FrameResources; FRAMES_IN_FLIGHT],
+
     // TODO: put swapchain and render_done_semaphore together?
     pub render_done_semaphores: Vec<Semaphore>,
     pub swapchain: Swapchain,
+
+    // TODO: move to renderer?
     pub descriptor: descriptors::Descriptor,
     pub pipeline_layout: vk::PipelineLayout,
+
     pub debug_utils_loader: debug_utils::Instance,
     pub debug_callback: DebugUtilsMessengerEXT,
-    pub properties: vk::PhysicalDeviceProperties,
+    pub surface: vk::SurfaceKHR,
+    pub surface_loader: surface::Instance,
 }
 
-impl Engine {
+impl Device {
     pub fn new(window: &Window) -> Self {
         let entry = Entry::linked();
 
@@ -493,14 +494,13 @@ impl Engine {
         }
 
         Self {
-            entry,
-            instance,
+            device,
             surface,
             surface_loader,
             physical_device: pdevice,
-            device,
-            queue_family_index,
+            instance,
             graphics_queue,
+            properties: properties.properties,
             allocator: ManuallyDrop::new(Arc::new(Mutex::new(allocator))),
             frame_resources,
             render_done_semaphores,
@@ -509,7 +509,6 @@ impl Engine {
             pipeline_layout,
             debug_utils_loader,
             debug_callback,
-            properties: properties.properties,
         }
     }
 
@@ -615,7 +614,7 @@ impl Engine {
     }
 }
 
-impl Drop for Engine {
+impl Drop for Device {
     fn drop(&mut self) {
         unsafe {
             let swapchain = &self.swapchain;
@@ -680,7 +679,7 @@ pub unsafe extern "system" fn vulkan_debug_callback(
 }
 
 pub fn create_compute_pipeline(
-    device: &Device,
+    device: &ash::Device,
     layout: vk::PipelineLayout,
     module: vk::ShaderModule,
 ) -> vk::Pipeline {
@@ -703,7 +702,7 @@ pub fn create_compute_pipeline(
 }
 
 pub fn create_graphics_pipeline(
-    device: &Device,
+    device: &ash::Device,
     layout: vk::PipelineLayout,
     module: vk::ShaderModule,
     shader_stages: &[vk::ShaderStageFlags],
@@ -791,7 +790,7 @@ pub fn create_graphics_pipeline(
 }
 
 pub fn push_constants<T>(
-    device: &Device,
+    device: &ash::Device,
     cmd: vk::CommandBuffer,
     layout: vk::PipelineLayout,
     data: &T,
@@ -810,7 +809,7 @@ pub fn get_group_count(size: u32, threads: u32) -> u32 {
     (size + threads - 1) / threads
 }
 
-pub fn image_giga_barrier(device: &Device, cmd: vk::CommandBuffer, image: vk::Image) {
+pub fn image_giga_barrier(device: &ash::Device, cmd: vk::CommandBuffer, image: vk::Image) {
     let image_memory_barrier = [vk::ImageMemoryBarrier2::default()
         .image(image)
         .old_layout(vk::ImageLayout::UNDEFINED)
@@ -826,7 +825,7 @@ pub fn image_giga_barrier(device: &Device, cmd: vk::CommandBuffer, image: vk::Im
     unsafe { device.cmd_pipeline_barrier2(cmd, &dependency_info) };
 }
 
-pub fn giga_barrier(device: &Device, cmd: vk::CommandBuffer) {
+pub fn giga_barrier(device: &ash::Device, cmd: vk::CommandBuffer) {
     let memory_barrier = [vk::MemoryBarrier2::default()
         .src_stage_mask(vk::PipelineStageFlags2::ALL_GRAPHICS)
         .src_access_mask(vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE)
@@ -838,7 +837,7 @@ pub fn giga_barrier(device: &Device, cmd: vk::CommandBuffer) {
 }
 
 pub fn create_buffer(
-    device: &Device,
+    device: &ash::Device,
     allocator: &mut Allocator,
     memory_location: gpu_allocator::MemoryLocation,
     flags: vk::BufferUsageFlags,
@@ -874,7 +873,7 @@ pub fn create_buffer(
 }
 
 pub fn create_buffer_with_data(
-    device: &Device,
+    device: &ash::Device,
     queue: Queue,
     pool: vk::CommandPool,
     cmd: vk::CommandBuffer,
@@ -929,7 +928,7 @@ pub fn create_buffer_with_data(
 }
 
 pub fn create_image_with_data(
-    device: &Device,
+    device: &ash::Device,
     queue: Queue,
     pool: vk::CommandPool,
     cmd: vk::CommandBuffer,
@@ -1011,7 +1010,7 @@ pub fn create_image_with_data(
     image
 }
 
-pub fn destroy_buffer(device: &Device, allocator: &mut Allocator, buffer: &mut Buffer) {
+pub fn destroy_buffer(device: &ash::Device, allocator: &mut Allocator, buffer: &mut Buffer) {
     unsafe {
         let allocation = std::mem::take(&mut buffer.allocation);
         allocator.free(allocation).unwrap();
@@ -1020,7 +1019,7 @@ pub fn destroy_buffer(device: &Device, allocator: &mut Allocator, buffer: &mut B
 }
 
 pub fn create_image(
-    device: &Device,
+    device: &ash::Device,
     allocator: &mut Allocator,
     extent: vk::Extent2D,
     format: vk::Format,
@@ -1077,7 +1076,7 @@ pub fn create_image(
     }
 }
 
-pub fn destroy_image(device: &Device, allocator: &mut Allocator, image: &mut Image) {
+pub fn destroy_image(device: &ash::Device, allocator: &mut Allocator, image: &mut Image) {
     unsafe {
         let allocation = std::mem::take(&mut image.allocation);
         allocator.free(allocation).unwrap();
@@ -1097,7 +1096,7 @@ pub fn image_subresource_range(aspect_mask: vk::ImageAspectFlags) -> vk::ImageSu
 }
 
 pub fn create_image_view(
-    device: &Device,
+    device: &ash::Device,
     image: vk::Image,
     format: vk::Format,
     view_type: vk::ImageViewType,
@@ -1113,7 +1112,7 @@ pub fn create_image_view(
 }
 
 // Taken from ash
-pub fn load_shader(device: &Device, path: &str) -> vk::ShaderModule {
+pub fn load_shader(device: &ash::Device, path: &str) -> vk::ShaderModule {
     let mut file = std::fs::File::open(path).expect("Could not read / open file");
 
     let mut spv: Vec<u8> = Vec::new();
@@ -1125,7 +1124,7 @@ pub fn load_shader(device: &Device, path: &str) -> vk::ShaderModule {
     unsafe { device.create_shader_module(&create_info, None).unwrap() }
 }
 
-fn get_buffer_address(device: &Device, buffer: vk::Buffer) -> vk::DeviceAddress {
+fn get_buffer_address(device: &ash::Device, buffer: vk::Buffer) -> vk::DeviceAddress {
     let buffer_address_info = vk::BufferDeviceAddressInfo::default().buffer(buffer);
 
     unsafe { device.get_buffer_device_address(&buffer_address_info) }
