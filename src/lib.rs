@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use ash::{
     Entry, Instance,
     ext::debug_utils,

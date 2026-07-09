@@ -10,6 +10,7 @@ pub struct Scene {
     pub node_transforms: Vec<NodeTransform>,
 }
 
+#[allow(dead_code)]
 pub struct ObjectData {
     world_transform: Mat4,
     mesh_id: u32,
@@ -39,6 +40,7 @@ pub struct Mesh {
     pub center: Vec3,
 }
 
+#[allow(dead_code)]
 pub struct Vertex {
     pos: Vec3,
     padding: f32,
