@@ -1,6 +1,8 @@
 use ash::vk::{self, Fence};
 use glam::Vec4Swizzles;
+use mew::basic_renderer;
 use mew::descriptors::RenderResourceTag;
+use mew::rendergraph::{Rendergraph, Pass};
 use mew::swapchain::recreate_swapchain;
 use mew::{
     camera::{Camera, Key, KeyState},
@@ -571,21 +573,7 @@ fn render_loop(renderer: &mut Renderer) {
         let p00 = proj.x_axis.x;
         let p11 = proj.y_axis.y;
 
-        #[repr(C)]
-        struct PushConstants {
-            view: glam::Mat4,
-            mesh_buffer: vk::DeviceAddress,
-            object_buffer: vk::DeviceAddress,
-            draw_indirect_buffer: vk::DeviceAddress,
-            dispatch_buffer: vk::DeviceAddress,
-            planes: glam::Vec4,
-            p00: f32,
-            p11: f32,
-            near: f32,
-            far: f32,
-            count: u32,
-        }
-        let pc = PushConstants {
+        let cull_constants = basic_renderer::CullConstants {
             view,
             mesh_buffer: renderer.mesh_buffer.address,
             object_buffer: renderer.object_buffer.address,
@@ -598,8 +586,8 @@ fn render_loop(renderer: &mut Renderer) {
             far: renderer.camera.far,
             count: renderables_count as u32,
         };
-        mew::push_constants(&device, cmd, renderer.backend.pipeline_layout, &pc);
 
+        device.cmd_push_constants(cmd, renderer.backend.pipeline_layout, vk::ShaderStageFlags::ALL, 0, mew::push_constants_as_bytes(&cull_constants));
         let group_count_x = mew::get_group_count(renderables_count as u32, 256);
         device.cmd_dispatch(cmd, group_count_x, 1, 1);
     };
@@ -665,21 +653,14 @@ fn render_loop(renderer: &mut Renderer) {
         device.cmd_set_viewport(cmd, 0, &viewport);
         device.cmd_set_scissor(cmd, 0, &scissors);
 
-        #[allow(dead_code)]
-        struct PushConstants {
-            view_proj: glam::Mat4,
-            vertex_buffer: vk::DeviceAddress,
-            mesh_buffer: vk::DeviceAddress,
-            object_buffer: vk::DeviceAddress,
-        }
-        let pc = PushConstants {
+        let mesh_constants = basic_renderer::MeshConstants {
             view_proj,
             vertex_buffer: renderer.vertex_buffer.address,
             mesh_buffer: renderer.mesh_buffer.address,
             object_buffer: renderer.object_buffer.address,
         };
-        mew::push_constants(&device, cmd, renderer.backend.pipeline_layout, &pc);
 
+        device.cmd_push_constants(cmd, renderer.backend.pipeline_layout, vk::ShaderStageFlags::ALL, 0, mew::push_constants_as_bytes(&mesh_constants));
         device.cmd_bind_index_buffer(cmd, renderer.index_buffer.buffer, 0, vk::IndexType::UINT32);
 
         device.cmd_begin_query(
@@ -708,16 +689,11 @@ fn render_loop(renderer: &mut Renderer) {
     // Copy to swapchain
     unsafe {
         device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, renderer.copy_pipeline);
-        #[allow(dead_code)]
-        struct PushConstants {
-            src_id: u32,
-            dst_id: u32,
-        }
-        let pc = PushConstants {
+        let copy_constants = basic_renderer::CopySwapchainConstants {
             src_id: renderer.framebuffer.draw_index,
             dst_id: renderer.framebuffer.swapchain_indices[swapchain_idx],
         };
-        mew::push_constants(&device, cmd, renderer.backend.pipeline_layout, &pc);
+        device.cmd_push_constants(cmd, renderer.backend.pipeline_layout, vk::ShaderStageFlags::ALL, 0, mew::push_constants_as_bytes(&copy_constants));
         let group_count_x = mew::get_group_count(renderer.backend.swapchain.extent.width, 8);
         let group_count_y = mew::get_group_count(renderer.backend.swapchain.extent.height, 8);
         device.cmd_dispatch(cmd, group_count_x, group_count_y, 1);
@@ -810,7 +786,11 @@ fn recreate_resources_on_swapchain_resize(renderer: &mut Renderer) {
 
     // Destroy outdated resources
     mew::destroy_image(device, &mut allocator, &mut renderer.framebuffer.draw_image);
-    mew::destroy_image(device, &mut allocator, &mut renderer.framebuffer.depth_image);
+    mew::destroy_image(
+        device,
+        &mut allocator,
+        &mut renderer.framebuffer.depth_image,
+    );
 
     // Recreate resources
     renderer.framebuffer.draw_image = mew::create_image(

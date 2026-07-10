@@ -19,17 +19,14 @@ use winit::{
     window::Window,
 };
 
+pub mod basic_renderer;
 pub mod camera;
-pub mod loader;
-
-pub mod rendergraph;
 pub mod descriptors;
-use descriptors::{RenderResourceTag, get_descriptor_index};
-
+pub mod loader;
+pub mod rendergraph;
 pub mod swapchain;
-use swapchain::Swapchain;
-
-use crate::swapchain::create_swapchain;
+use descriptors::{RenderResourceTag, get_descriptor_index};
+use swapchain::{Swapchain, create_swapchain};
 
 pub const FRAMES_IN_FLIGHT: usize = 2;
 pub const MAX_QUERY_COUNT: u32 = 10;
@@ -488,7 +485,8 @@ impl Device {
 
         unsafe {
             (0..FRAMES_IN_FLIGHT).for_each(|i| {
-                frame_resources[i].pipeline_query = device.create_query_pool(&query_info, None).unwrap();
+                frame_resources[i].pipeline_query =
+                    device.create_query_pool(&query_info, None).unwrap();
             });
         }
 
@@ -786,22 +784,6 @@ pub fn create_graphics_pipeline(
     };
 
     pipelines[0]
-}
-
-pub fn push_constants<T>(
-    device: &ash::Device,
-    cmd: vk::CommandBuffer,
-    layout: vk::PipelineLayout,
-    data: &T,
-) {
-    let size = std::mem::size_of::<T>();
-    let len = size / std::mem::size_of::<u8>();
-
-    let slice = unsafe { std::slice::from_raw_parts((data as *const T) as *const u8, len) };
-
-    unsafe {
-        device.cmd_push_constants(cmd, layout, vk::ShaderStageFlags::ALL, 0, &slice);
-    }
 }
 
 pub fn get_group_count(size: u32, threads: u32) -> u32 {
@@ -1143,11 +1125,16 @@ pub fn get_infinite_reverse_perspective_matrix(fovy: f32, aspect: f32, near: f32
     matrix
 }
 
+// TODO: bytemuck?
 pub fn as_bytes<T>(t: &Vec<T>) -> &[u8] {
     let len = t.len() * std::mem::size_of::<T>();
-    let slice = unsafe {
-        std::slice::from_raw_parts(t.as_ptr() as *const u8, len)
-    };
+    let slice = unsafe { std::slice::from_raw_parts(t.as_ptr() as *const u8, len) };
 
+    slice
+}
+
+// TODO: bytemuck?
+pub fn push_constants_as_bytes<T>(t: &T) -> &[u8] {
+    let slice = unsafe { std::slice::from_raw_parts((t as *const T) as *const u8, std::mem::size_of::<T>()) };
     slice
 }

@@ -8,7 +8,7 @@ use std::{collections::HashMap, marker::PhantomData};
 use crate as mew;
 use mew::Image;
 
-pub struct Graph<'a> {
+pub struct Rendergraph<'a> {
     resource_to_id: HashMap<&'a str, usize>,
     resource_states: Vec<ResourceState<'a>>,
     dependencies: Vec<Vec<usize>>,
@@ -22,7 +22,7 @@ struct ResourceState<'a> {
     reads_since_last_write: Vec<usize>,
 }
 
-impl<'a> Graph<'a> {
+impl<'a> Rendergraph<'a> {
     pub fn new() -> Self {
         Self {
             resource_to_id: HashMap::new(),
@@ -143,8 +143,8 @@ pub enum RenderPass {
 pub struct Pass<'a, T> {
     reads: Vec<&'a str>,
     writes: Vec<&'a str>,
-    // TODO: this is fragile, can we do better than inlining 256 bytes?
     constants: &'a [u8],
+    // TODO: callback fn, and possibly pipeline handle?
     render_pass: RenderPass,
     _marker: PhantomData<T>,
 }
