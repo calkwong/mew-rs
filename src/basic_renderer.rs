@@ -8,7 +8,16 @@ pub struct CullRenderer {
     pub constants: CullConstants,
 }
 
+impl CullRenderer {
+    pub fn new() -> Self {
+        Self {
+            constants: CullConstants::default(),
+        }
+    }
+}
+
 #[repr(C)]
+#[derive(Default)]
 pub struct CullConstants {
     pub view: Mat4,
     pub mesh_buffer: vk::DeviceAddress,
@@ -27,7 +36,16 @@ pub struct MeshRenderer {
     pub constants: MeshConstants,
 }
 
+impl MeshRenderer {
+    pub fn new() -> Self {
+        Self {
+            constants: MeshConstants::default(),
+        }
+    }
+}
+
 #[repr(C)]
+#[derive(Default)]
 pub struct MeshConstants {
     pub view_proj: Mat4,
     pub vertex_buffer: vk::DeviceAddress,
@@ -35,12 +53,21 @@ pub struct MeshConstants {
     pub object_buffer: vk::DeviceAddress,
 }
 
-pub struct CopySwapchainRenderer {
-    pub constants: CopySwapchainConstants,
+pub struct CopyRenderer {
+    pub constants: CopyConstants,
 }
 
 #[repr(C)]
-pub struct CopySwapchainConstants {
+#[derive(Default)]
+pub struct CopyConstants {
     pub src_id: u32,
     pub dst_id: u32,
+}
+
+impl CopyRenderer {
+    pub fn new() -> Self {
+        Self {
+            constants: CopyConstants::default(),
+        }
+    }
 }

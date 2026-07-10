@@ -2,7 +2,7 @@ use ash::vk::{self, Fence};
 use glam::Vec4Swizzles;
 use mew::basic_renderer;
 use mew::descriptors::RenderResourceTag;
-use mew::rendergraph::{Rendergraph, Pass};
+use mew::rendergraph::{Pass, Rendergraph};
 use mew::swapchain::recreate_swapchain;
 use mew::{
     camera::{Camera, Key, KeyState},
@@ -26,6 +26,10 @@ struct Renderer {
     camera: Camera,
     last_frame_time: Option<Instant>,
     frame_index: usize,
+
+    cull: basic_renderer::CullRenderer,
+    mesh: basic_renderer::MeshRenderer,
+    copy: basic_renderer::CopyRenderer,
 
     copy_pipeline: vk::Pipeline,
     draw_pipeline: vk::Pipeline,
@@ -198,6 +202,9 @@ impl Renderer {
             camera,
             last_frame_time: None,
             frame_index: 0,
+            cull: basic_renderer::CullRenderer::new(),
+            mesh: basic_renderer::MeshRenderer::new(),
+            copy: basic_renderer::CopyRenderer::new(),
             copy_pipeline,
             draw_pipeline,
             cull_pipeline,
@@ -461,6 +468,9 @@ fn render_loop(renderer: &mut Renderer) {
     let cmd_begin_info =
         vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
 
+    // TODO: initialize graph and clear vectors each frame; still immediate mode but saves on heap allocations
+    let mut rdg = Rendergraph::new();
+
     unsafe { device.begin_command_buffer(cmd, &cmd_begin_info).unwrap() };
 
     unsafe {
@@ -490,27 +500,27 @@ fn render_loop(renderer: &mut Renderer) {
             });
     }
 
-    if renderer.frame_index >= mew::FRAMES_IN_FLIGHT {
-        let mut pipeline_query_results = [0u64; CURRENT_QUERIES as usize];
-        unsafe {
-            device
-                .get_query_pool_results(
-                    frame_resource.pipeline_query,
-                    0,
-                    &mut pipeline_query_results,
-                    vk::QueryResultFlags::TYPE_64,
-                )
-                .unwrap();
-        }
+    // if renderer.frame_index >= mew::FRAMES_IN_FLIGHT {
+    //     let mut pipeline_query_results = [0u64; CURRENT_QUERIES as usize];
+    //     unsafe {
+    //         device
+    //             .get_query_pool_results(
+    //                 frame_resource.pipeline_query,
+    //                 0,
+    //                 &mut pipeline_query_results,
+    //                 vk::QueryResultFlags::TYPE_64,
+    //             )
+    //             .unwrap();
+    //     }
 
-        // TODO: egui?
-        let _triangle_count = pipeline_query_results[0];
-        // dbg!(_triangle_count);
-    }
+    //     // TODO: egui?
+    //     let _triangle_count = pipeline_query_results[0];
+    //     // dbg!(_triangle_count);
+    // }
 
-    unsafe {
-        device.reset_query_pool(frame_resource.pipeline_query, 0, CURRENT_QUERIES);
-    }
+    // unsafe {
+    //     device.reset_query_pool(frame_resource.pipeline_query, 0, CURRENT_QUERIES);
+    // }
 
     let mut image_memory_barrier = vk::ImageMemoryBarrier2::default()
         .image(renderer.backend.swapchain.images[swapchain_idx])
@@ -559,9 +569,7 @@ fn render_loop(renderer: &mut Renderer) {
     giga_barrier(device, cmd);
 
     // Pass 1 - Culling
-    unsafe {
-        device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, renderer.cull_pipeline);
-
+    {
         let proj_t = proj.transpose();
         let m0 = proj_t.x_axis;
         let m1 = proj_t.y_axis;
@@ -573,7 +581,7 @@ fn render_loop(renderer: &mut Renderer) {
         let p00 = proj.x_axis.x;
         let p11 = proj.y_axis.y;
 
-        let cull_constants = basic_renderer::CullConstants {
+        renderer.cull.constants = basic_renderer::CullConstants {
             view,
             mesh_buffer: renderer.mesh_buffer.address,
             object_buffer: renderer.object_buffer.address,
@@ -587,117 +595,83 @@ fn render_loop(renderer: &mut Renderer) {
             count: renderables_count as u32,
         };
 
-        device.cmd_push_constants(cmd, renderer.backend.pipeline_layout, vk::ShaderStageFlags::ALL, 0, mew::push_constants_as_bytes(&cull_constants));
         let group_count_x = mew::get_group_count(renderables_count as u32, 256);
-        device.cmd_dispatch(cmd, group_count_x, 1, 1);
-    };
 
-    mew::giga_barrier(device, cmd);
+        rdg.add_pass(
+            Pass::new_compute()
+                .write("draw_indirect")
+                .write("dispatch")
+                .constants(mew::push_constants_as_bytes(&renderer.cull.constants))
+                .pipeline(renderer.cull_pipeline)
+                .dispatch(group_count_x, 1, 1),
+        );
+    }
 
     // Pass 2 - Rasterization
-    unsafe {
-        device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, renderer.draw_pipeline);
 
-        let clear_value = vk::ClearValue {
-            color: vk::ClearColorValue {
-                float32: [0.0, 0.0, 0.0, 1.0],
-            },
-        };
-
-        let depth_clear_value = vk::ClearValue {
-            depth_stencil: vk::ClearDepthStencilValue {
-                depth: 0.0,
-                stencil: 0,
-            },
-        };
-
-        let color_attachments = [vk::RenderingAttachmentInfo::default()
-            .image_view(renderer.framebuffer.draw_image.view)
-            .image_layout(vk::ImageLayout::GENERAL)
-            .load_op(vk::AttachmentLoadOp::CLEAR)
-            .store_op(vk::AttachmentStoreOp::STORE)
-            .clear_value(clear_value)];
-
-        let depth_attachment = vk::RenderingAttachmentInfo::default()
-            .image_view(renderer.framebuffer.depth_image.view)
-            .image_layout(vk::ImageLayout::GENERAL)
-            .load_op(vk::AttachmentLoadOp::CLEAR)
-            .store_op(vk::AttachmentStoreOp::STORE)
-            .clear_value(depth_clear_value);
-
-        let swapchain_extent = renderer.backend.swapchain.extent;
-
-        let rendering_info = vk::RenderingInfo::default()
-            .render_area(vk::Rect2D {
-                extent: swapchain_extent,
-                ..Default::default()
-            })
-            .depth_attachment(&depth_attachment)
-            .color_attachments(&color_attachments)
-            .layer_count(1);
-
-        device.cmd_begin_rendering(cmd, &rendering_info);
-
-        let viewport = [vk::Viewport::default()
-            .y(swapchain_extent.height as f32)
-            .width(swapchain_extent.width as f32)
-            .height(-(swapchain_extent.height as f32))
-            .max_depth(1.0)
-            .min_depth(0.0)];
-
-        let scissors = [vk::Rect2D {
-            extent: swapchain_extent,
-            ..Default::default()
-        }];
-
-        device.cmd_set_viewport(cmd, 0, &viewport);
-        device.cmd_set_scissor(cmd, 0, &scissors);
-
-        let mesh_constants = basic_renderer::MeshConstants {
+    {
+        renderer.mesh.constants = basic_renderer::MeshConstants {
             view_proj,
             vertex_buffer: renderer.vertex_buffer.address,
             mesh_buffer: renderer.mesh_buffer.address,
             object_buffer: renderer.object_buffer.address,
         };
 
-        device.cmd_push_constants(cmd, renderer.backend.pipeline_layout, vk::ShaderStageFlags::ALL, 0, mew::push_constants_as_bytes(&mesh_constants));
-        device.cmd_bind_index_buffer(cmd, renderer.index_buffer.buffer, 0, vk::IndexType::UINT32);
+        // device.cmd_begin_query(
+        //     cmd,
+        //     frame_resource.pipeline_query,
+        //     0,
+        //     vk::QueryControlFlags::empty(),
+        // );
 
-        device.cmd_begin_query(
-            cmd,
-            frame_resource.pipeline_query,
-            0,
-            vk::QueryControlFlags::empty(),
+        rdg.add_pass(
+            Pass::new_graphics()
+                .read("draw_indirect")
+                .read("dispatch")
+                .write("draw")
+                .write("depth")
+                .render_target(&renderer.framebuffer.draw_image, vk::AttachmentLoadOp::CLEAR)
+                .depth_target(&renderer.framebuffer.depth_image, vk::AttachmentLoadOp::CLEAR)
+                .constants(mew::push_constants_as_bytes(&renderer.mesh.constants))
+                .pipeline(renderer.draw_pipeline)
+                .draw_indirect(
+                    renderer.draw_indirect_buffer.buffer,
+                    0,
+                    renderer.dispatch_buffer.buffer,
+                    0,
+                    renderables_count as u32,
+                    std::mem::size_of::<vk::DrawIndexedIndirectCommand>() as u32,
+                    renderer.index_buffer.buffer,
+                    renderer.backend.swapchain.extent,
+                ),
         );
 
-        device.cmd_draw_indexed_indirect_count(
-            cmd,
-            renderer.draw_indirect_buffer.buffer,
-            0,
-            renderer.dispatch_buffer.buffer,
-            0,
-            renderables_count as u32, // There is a physical limit but for non-meshlets we are not concerned
-            std::mem::size_of::<vk::DrawIndexedIndirectCommand>() as u32,
-        );
-        device.cmd_end_query(cmd, frame_resource.pipeline_query, 0);
+        // device.cmd_end_query(cmd, frame_resource.pipeline_query, 0);
+    }
 
-        device.cmd_end_rendering(cmd);
-    };
-
-    mew::giga_barrier(&device, cmd);
-
-    // Copy to swapchain
-    unsafe {
-        device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, renderer.copy_pipeline);
-        let copy_constants = basic_renderer::CopySwapchainConstants {
+    // Pass 3 - Copy to swapchain
+    {
+        renderer.copy.constants = basic_renderer::CopyConstants {
             src_id: renderer.framebuffer.draw_index,
             dst_id: renderer.framebuffer.swapchain_indices[swapchain_idx],
         };
-        device.cmd_push_constants(cmd, renderer.backend.pipeline_layout, vk::ShaderStageFlags::ALL, 0, mew::push_constants_as_bytes(&copy_constants));
         let group_count_x = mew::get_group_count(renderer.backend.swapchain.extent.width, 8);
         let group_count_y = mew::get_group_count(renderer.backend.swapchain.extent.height, 8);
-        device.cmd_dispatch(cmd, group_count_x, group_count_y, 1);
+        rdg.add_pass(
+            Pass::new_compute()
+                .read("draw")
+                // TODO: will this duplicate be an issue?
+                .write("draw")
+                .constants(mew::push_constants_as_bytes(&renderer.copy.constants))
+                .pipeline(renderer.copy_pipeline)
+                .dispatch(group_count_x, group_count_y, 1),
+        );
     }
+
+    rdg.compile();
+    rdg.run(device, cmd, renderer.backend.pipeline_layout);
+
+    // TODO: we are firing 2 barriers back to back here
 
     // transition to present
     image_memory_barrier.image = renderer.backend.swapchain.images[swapchain_idx];

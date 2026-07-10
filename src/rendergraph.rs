@@ -13,7 +13,7 @@ pub struct Rendergraph<'a> {
     resource_states: Vec<ResourceState<'a>>,
     dependencies: Vec<Vec<usize>>,
     execution_groups: Vec<Vec<usize>>,
-    executes: Vec<RenderPass>,
+    executes: Vec<Box<dyn Fn(&ash::Device, vk::CommandBuffer, vk::PipelineLayout) + 'a>>,
 }
 
 struct ResourceState<'a> {
@@ -76,7 +76,7 @@ impl<'a> Rendergraph<'a> {
             }
         }
 
-        self.executes.push(pass.render_pass);
+        self.executes.push(pass.execute);
     }
 
     fn build_execution_groups(&mut self) {
@@ -118,20 +118,21 @@ impl<'a> Rendergraph<'a> {
         self.build_execution_groups();
     }
 
-    pub fn run(&self) {
+    pub fn run(&self, device: &ash::Device, cmd: vk::CommandBuffer, layout: vk::PipelineLayout) {
         for group in &self.execution_groups {
             if group.len() > 0 {
                 for execute_id in group {
-                    match self.executes[*execute_id] {
-                        // TODO:
-                        RenderPass::Compute(_) => {}
-                        RenderPass::Graphics(_) => {}
-                    }
+                    (self.executes[*execute_id])(device, cmd, layout);
                 }
             } else {
                 break;
             }
+            mew::giga_barrier(device, cmd);
         }
+
+        // TODO: there's likely a dependency duplication issue, which does not affect correctness but does some redundant work - to investigate
+        dbg!(&self.dependencies);
+        // dbg!(&self.execution_groups);
     }
 }
 
@@ -146,7 +147,7 @@ pub struct Pass<'a, T> {
     pipeline: vk::Pipeline,
     constants: &'a [u8],
     // TODO: Fn or FnOnce?
-    execute: Box<dyn Fn(ash::Device, vk::CommandBuffer, vk::PipelineLayout) + 'a>,
+    execute: Box<dyn Fn(&ash::Device, vk::CommandBuffer, vk::PipelineLayout) + 'a>,
     render_pass: RenderPass,
     _marker: PhantomData<T>,
 }
@@ -223,7 +224,6 @@ pub struct AttachmentDesc {
 pub struct GraphicsPass {
     render_targets: Vec<AttachmentDesc>,
     depth_target: Option<AttachmentDesc>,
-    custom: Box<dyn Fn()>,
 }
 
 impl<'a> Pass<'a, GraphicsPass> {
@@ -238,7 +238,6 @@ impl<'a> Pass<'a, GraphicsPass> {
             render_pass: RenderPass::Graphics(GraphicsPass {
                 render_targets: Vec::new(),
                 depth_target: None,
-                custom: Box::new(|| {}),
             }),
             _marker: PhantomData,
         }
@@ -349,10 +348,10 @@ impl<'a> Pass<'a, GraphicsPass> {
                 rendering_info = rendering_info.depth_attachment(depth_attachment);
             }
 
+            device.cmd_begin_rendering(cmd, &rendering_info);
             device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
             device.cmd_set_viewport(cmd, 0, &viewport);
             device.cmd_set_scissor(cmd, 0, &scissors);
-            device.cmd_begin_rendering(cmd, &rendering_info);
             device.cmd_push_constants(cmd, layout, vk::ShaderStageFlags::ALL, 0, self.constants);
             device.cmd_bind_index_buffer(cmd, index_buffer, 0, vk::IndexType::UINT32);
             device.cmd_draw_indexed_indirect_count(
@@ -364,6 +363,7 @@ impl<'a> Pass<'a, GraphicsPass> {
                 max_draw_count,
                 stride,
             );
+            device.cmd_end_rendering(cmd);
         });
 
         self
