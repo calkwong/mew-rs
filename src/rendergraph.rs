@@ -33,6 +33,8 @@ impl<'a> Rendergraph<'a> {
         }
     }
 
+    // The dependencies list built may contain duplicates, but dfs search ensures
+    // we don't traverse the children of a node we have already visited via memoization
     pub fn add_pass<T>(&mut self, pass: Pass<'a, T>) {
         let pass_id = self.dependencies.len();
         self.dependencies.push(Vec::new());
@@ -130,8 +132,6 @@ impl<'a> Rendergraph<'a> {
             mew::giga_barrier(device, cmd);
         }
 
-        // TODO: there's likely a dependency duplication issue, which does not affect correctness but does some redundant work - to investigate
-        dbg!(&self.dependencies);
         // dbg!(&self.execution_groups);
     }
 }
@@ -153,6 +153,18 @@ pub struct Pass<'a, T> {
 }
 
 impl<'a, T> Pass<'a, T> {
+    fn new(render_pass: RenderPass) -> Self {
+        Self {
+            reads: Vec::new(),
+            writes: Vec::new(),
+            pipeline: vk::Pipeline::null(),
+            constants: &[],
+            execute: Box::new(|_, _, _| {}),
+            render_pass,
+            _marker: PhantomData,
+        }
+    }
+
     pub fn read(mut self, name: &'a str) -> Self {
         self.reads.push(name);
         self
@@ -186,17 +198,8 @@ pub struct ComputePass {
 }
 
 impl<'a> Pass<'a, ComputePass> {
-    // TODO: can we make this a default?
     pub fn new_compute() -> Self {
-        Self {
-            reads: Vec::new(),
-            writes: Vec::new(),
-            pipeline: vk::Pipeline::null(),
-            constants: &[],
-            execute: Box::new(|_, _, _| {}),
-            render_pass: RenderPass::Compute(ComputePass { x: 0, y: 0, z: 0 }),
-            _marker: PhantomData,
-        }
+        Pass::new(RenderPass::Compute(ComputePass { x: 0, y: 0, z: 0 }))
     }
 
     pub fn dispatch(mut self, x: u32, y: u32, z: u32) -> Self {
@@ -227,20 +230,11 @@ pub struct GraphicsPass {
 }
 
 impl<'a> Pass<'a, GraphicsPass> {
-    // TODO: can we make this a default?
     pub fn new_graphics() -> Self {
-        Self {
-            reads: Vec::new(),
-            writes: Vec::new(),
-            pipeline: vk::Pipeline::null(),
-            constants: &[],
-            execute: Box::new(|_, _, _| {}),
-            render_pass: RenderPass::Graphics(GraphicsPass {
-                render_targets: Vec::new(),
-                depth_target: None,
-            }),
-            _marker: PhantomData,
-        }
+        Pass::new(RenderPass::Graphics(GraphicsPass {
+            render_targets: Vec::new(),
+            depth_target: None,
+        }))
     }
 
     pub fn render_target(mut self, image: &Image, load_op: vk::AttachmentLoadOp) -> Self {
