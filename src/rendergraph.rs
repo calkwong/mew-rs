@@ -196,6 +196,7 @@ impl<'a> Rendergraph<'a> {
             mew::giga_barrier(device, cmd);
         }
 
+        // dbg!(&self.dependencies);
         // dbg!(&self.execution_groups);
     }
 }
@@ -345,29 +346,25 @@ impl<'a> Pass<'a, GraphicsPass> {
         }))
     }
 
-    // TODO: can this replace some of the read/write work?
-    pub fn render_target(mut self, image: &Image, load_op: vk::AttachmentLoadOp) -> Self {
+    pub fn render_target(mut self, name: &'a str, image: &Image, load_op: vk::AttachmentLoadOp) -> Self {
         if let RenderPass::Graphics(data) = &mut self.render_pass {
             data.render_targets.push(AttachmentDesc {
                 view: image.view,
                 load_op,
             });
-        } else {
-            panic!("Render target called on wrong render pass type");
         }
+        self = self.write_image(name, image.image, vk::ImageAspectFlags::COLOR);
         self
     }
 
-    // TODO: can this replace some of the read/write work?
-    pub fn depth_target(mut self, image: &Image, load_op: vk::AttachmentLoadOp) -> Self {
+    pub fn depth_target(mut self, name: &'a str, image: &Image, load_op: vk::AttachmentLoadOp) -> Self {
         if let RenderPass::Graphics(data) = &mut self.render_pass {
             data.depth_target = Some(AttachmentDesc {
                 view: image.view,
                 load_op,
             });
-        } else {
-            panic!("Depth target called on wrong render pass type");
         }
+        self = self.write_image(name, image.image, vk::ImageAspectFlags::DEPTH);
         self
     }
 

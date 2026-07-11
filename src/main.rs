@@ -17,7 +17,7 @@ use winit::{
     window::{Window, WindowId},
 };
 
-const CURRENT_QUERIES: u32 = 1;
+// const CURRENT_QUERIES: u32 = 1;
 
 struct Renderer {
     window: Window,
@@ -590,10 +590,8 @@ fn render_loop(renderer: &mut Renderer) {
             Pass::new_graphics()
                 .read_buffer("draw_indirect")
                 .read_buffer("dispatch")
-                .write_image("draw", renderer.framebuffer.draw_image.image, vk::ImageAspectFlags::COLOR)
-                .write_image("depth", renderer.framebuffer.depth_image.image, vk::ImageAspectFlags::DEPTH)
-                .render_target(&renderer.framebuffer.draw_image, vk::AttachmentLoadOp::CLEAR)
-                .depth_target(&renderer.framebuffer.depth_image, vk::AttachmentLoadOp::CLEAR)
+                .render_target("draw", &renderer.framebuffer.draw_image, vk::AttachmentLoadOp::CLEAR)
+                .depth_target("depth", &renderer.framebuffer.depth_image, vk::AttachmentLoadOp::CLEAR)
                 .constants(mew::push_constants_as_bytes(&renderer.mesh.constants))
                 .pipeline(renderer.draw_pipeline)
                 .draw_indirect(
