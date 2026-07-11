@@ -468,7 +468,6 @@ fn render_loop(renderer: &mut Renderer) {
     let cmd_begin_info =
         vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
 
-    // TODO: initialize graph and clear vectors each frame; still immediate mode but saves on heap allocations
     let mut rdg = Rendergraph::new();
 
     unsafe { device.begin_command_buffer(cmd, &cmd_begin_info).unwrap() };
@@ -522,43 +521,6 @@ fn render_loop(renderer: &mut Renderer) {
     //     device.reset_query_pool(frame_resource.pipeline_query, 0, CURRENT_QUERIES);
     // }
 
-    let mut image_memory_barrier = vk::ImageMemoryBarrier2::default()
-        .image(renderer.backend.swapchain.images[swapchain_idx])
-        .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-        .src_access_mask(vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE)
-        .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-        .dst_access_mask(vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE)
-        .subresource_range(vk::ImageSubresourceRange {
-            aspect_mask: vk::ImageAspectFlags::COLOR,
-            base_mip_level: 0,
-            level_count: 1,
-            base_array_layer: 0,
-            layer_count: 1,
-        })
-        .old_layout(vk::ImageLayout::UNDEFINED)
-        .new_layout(vk::ImageLayout::GENERAL);
-
-    let mut image_memory_barriers: Vec<vk::ImageMemoryBarrier2> = Vec::new();
-    image_memory_barriers.push(image_memory_barrier);
-    // draw image & depth image
-    image_memory_barrier.image = renderer.framebuffer.draw_image.image;
-    image_memory_barrier.new_layout = vk::ImageLayout::GENERAL;
-    image_memory_barriers.push(image_memory_barrier);
-    image_memory_barrier.image = renderer.framebuffer.depth_image.image;
-    image_memory_barrier.new_layout = vk::ImageLayout::GENERAL;
-    image_memory_barrier.subresource_range = vk::ImageSubresourceRange {
-        aspect_mask: vk::ImageAspectFlags::DEPTH,
-        base_mip_level: 0,
-        level_count: 1,
-        base_array_layer: 0,
-        layer_count: 1,
-    };
-    image_memory_barriers.push(image_memory_barrier);
-
-    let mut dependency_info =
-        vk::DependencyInfo::default().image_memory_barriers(&image_memory_barriers);
-    unsafe { device.cmd_pipeline_barrier2(cmd, &dependency_info) };
-
     let renderables_count =
         renderer.object_buffer.size as usize / std::mem::size_of::<mew::loader::ObjectData>();
 
@@ -599,8 +561,8 @@ fn render_loop(renderer: &mut Renderer) {
 
         rdg.add_pass(
             Pass::new_compute()
-                .write("draw_indirect")
-                .write("dispatch")
+                .write_buffer("draw_indirect")
+                .write_buffer("dispatch")
                 .constants(mew::push_constants_as_bytes(&renderer.cull.constants))
                 .pipeline(renderer.cull_pipeline)
                 .dispatch(group_count_x, 1, 1),
@@ -626,10 +588,10 @@ fn render_loop(renderer: &mut Renderer) {
 
         rdg.add_pass(
             Pass::new_graphics()
-                .read("draw_indirect")
-                .read("dispatch")
-                .write("draw")
-                .write("depth")
+                .read_buffer("draw_indirect")
+                .read_buffer("dispatch")
+                .write_image("draw", renderer.framebuffer.draw_image.image, vk::ImageAspectFlags::COLOR)
+                .write_image("depth", renderer.framebuffer.depth_image.image, vk::ImageAspectFlags::DEPTH)
                 .render_target(&renderer.framebuffer.draw_image, vk::AttachmentLoadOp::CLEAR)
                 .depth_target(&renderer.framebuffer.depth_image, vk::AttachmentLoadOp::CLEAR)
                 .constants(mew::push_constants_as_bytes(&renderer.mesh.constants))
@@ -659,9 +621,8 @@ fn render_loop(renderer: &mut Renderer) {
         let group_count_y = mew::get_group_count(renderer.backend.swapchain.extent.height, 8);
         rdg.add_pass(
             Pass::new_compute()
-                .read("draw")
-                // TODO: will this duplicate be an issue?
-                .write("draw")
+                .read_image("draw", renderer.framebuffer.draw_image.image, vk::ImageAspectFlags::COLOR)
+                .write_image("swapchain", renderer.backend.swapchain.images[swapchain_idx], vk::ImageAspectFlags::COLOR)
                 .constants(mew::push_constants_as_bytes(&renderer.copy.constants))
                 .pipeline(renderer.copy_pipeline)
                 .dispatch(group_count_x, group_count_y, 1),
@@ -671,23 +632,20 @@ fn render_loop(renderer: &mut Renderer) {
     rdg.compile();
     rdg.run(device, cmd, renderer.backend.pipeline_layout);
 
-    // TODO: we are firing 2 barriers back to back here
+    // TODO: we are firing 2 barriers back to back here, 1 from end of rendergraph, and 1 for presentation
 
     // transition to present
-    image_memory_barrier.image = renderer.backend.swapchain.images[swapchain_idx];
-    image_memory_barrier.old_layout = vk::ImageLayout::GENERAL;
-    image_memory_barrier.new_layout = vk::ImageLayout::PRESENT_SRC_KHR;
-    image_memory_barrier.subresource_range = vk::ImageSubresourceRange {
-        aspect_mask: vk::ImageAspectFlags::COLOR,
-        base_mip_level: 0,
-        level_count: 1,
-        base_array_layer: 0,
-        layer_count: 1,
-    };
-    image_memory_barriers.clear();
-    image_memory_barriers.push(image_memory_barrier);
+    let image_memory_barrier = [vk::ImageMemoryBarrier2::default()
+        .image(renderer.backend.swapchain.images[swapchain_idx])
+        .old_layout(vk::ImageLayout::GENERAL)
+        .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+        .src_stage_mask(vk::PipelineStageFlags2::ALL_GRAPHICS)
+        .src_access_mask(vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE)
+        .dst_stage_mask(vk::PipelineStageFlags2::ALL_GRAPHICS)
+        .dst_access_mask(vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE)
+        .subresource_range(mew::image_subresource_range(vk::ImageAspectFlags::COLOR))];
 
-    dependency_info = vk::DependencyInfo::default().image_memory_barriers(&image_memory_barriers);
+    let dependency_info = vk::DependencyInfo::default().image_memory_barriers(&image_memory_barrier);
     unsafe { device.cmd_pipeline_barrier2(cmd, &dependency_info) };
 
     unsafe {

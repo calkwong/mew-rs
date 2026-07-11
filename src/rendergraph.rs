@@ -14,6 +14,8 @@ pub struct Rendergraph<'a> {
     dependencies: Vec<Vec<usize>>,
     execution_groups: Vec<Vec<usize>>,
     executes: Vec<Box<dyn Fn(&ash::Device, vk::CommandBuffer, vk::PipelineLayout) + 'a>>,
+    images: Vec<vk::Image>,
+    depth_image: Option<vk::Image>,
 }
 
 struct ResourceState<'a> {
@@ -30,6 +32,8 @@ impl<'a> Rendergraph<'a> {
             dependencies: Vec::new(),
             execution_groups: Vec::new(),
             executes: Vec::new(),
+            images: Vec::new(),
+            depth_image: None,
         }
     }
 
@@ -39,7 +43,7 @@ impl<'a> Rendergraph<'a> {
         let pass_id = self.dependencies.len();
         self.dependencies.push(Vec::new());
 
-        for name in &pass.reads {
+        for PassResource { name, image } in &pass.reads {
             // Record dependencies
             if let Some(id) = self.resource_to_id.get(name) {
                 self.resource_states[*id]
@@ -55,10 +59,23 @@ impl<'a> Rendergraph<'a> {
                     last_write: None,
                     reads_since_last_write: vec![pass_id],
                 });
+                if let Some(image_metadata) = image {
+                    match (*image_metadata).aspect {
+                        vk::ImageAspectFlags::DEPTH => {
+                            self.depth_image = Some((*image_metadata).image);
+                        }
+                        vk::ImageAspectFlags::COLOR => {
+                            self.images.push((*image_metadata).image);
+                        }
+                        _ => {
+                            panic!("This should not execute!");
+                        }
+                    }
+                }
             }
         }
 
-        for name in &pass.writes {
+        for PassResource { name, image } in &pass.writes {
             if let Some(id) = self.resource_to_id.get(name) {
                 self.resource_states[*id].last_write = Some(pass_id);
 
@@ -75,6 +92,19 @@ impl<'a> Rendergraph<'a> {
                     last_write: Some(pass_id),
                     reads_since_last_write: Vec::new(),
                 });
+                if let Some(image_metadata) = image {
+                    match (*image_metadata).aspect {
+                        vk::ImageAspectFlags::DEPTH => {
+                            self.depth_image = Some((*image_metadata).image);
+                        }
+                        vk::ImageAspectFlags::COLOR => {
+                            self.images.push((*image_metadata).image);
+                        }
+                        _ => {
+                            panic!("This should not execute!");
+                        }
+                    }
+                }
             }
         }
 
@@ -121,6 +151,40 @@ impl<'a> Rendergraph<'a> {
     }
 
     pub fn run(&self, device: &ash::Device, cmd: vk::CommandBuffer, layout: vk::PipelineLayout) {
+        let mut image_memory_barriers: Vec<vk::ImageMemoryBarrier2> = self
+            .images
+            .iter()
+            .map(|image| {
+                vk::ImageMemoryBarrier2::default()
+                    .image(*image)
+                    .old_layout(vk::ImageLayout::UNDEFINED)
+                    .new_layout(vk::ImageLayout::GENERAL)
+                    .src_stage_mask(vk::PipelineStageFlags2::ALL_GRAPHICS)
+                    .src_access_mask(vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE)
+                    .dst_stage_mask(vk::PipelineStageFlags2::ALL_GRAPHICS)
+                    .dst_access_mask(vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE)
+                    .subresource_range(mew::image_subresource_range(vk::ImageAspectFlags::COLOR))
+            })
+            .collect();
+
+        if let Some(depth) = self.depth_image {
+            image_memory_barriers.push(
+                vk::ImageMemoryBarrier2::default()
+                    .image(depth)
+                    .old_layout(vk::ImageLayout::UNDEFINED)
+                    .new_layout(vk::ImageLayout::GENERAL)
+                    .src_stage_mask(vk::PipelineStageFlags2::ALL_GRAPHICS)
+                    .src_access_mask(vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE)
+                    .dst_stage_mask(vk::PipelineStageFlags2::ALL_GRAPHICS)
+                    .dst_access_mask(vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE)
+                    .subresource_range(mew::image_subresource_range(vk::ImageAspectFlags::DEPTH)),
+            )
+        }
+
+        let dependency_info =
+            vk::DependencyInfo::default().image_memory_barriers(&image_memory_barriers);
+        unsafe { device.cmd_pipeline_barrier2(cmd, &dependency_info) };
+
         for group in &self.execution_groups {
             if group.len() > 0 {
                 for execute_id in group {
@@ -141,9 +205,20 @@ pub enum RenderPass {
     Graphics(GraphicsPass),
 }
 
+#[derive(Copy, Clone)]
+struct ImageMetadata {
+    image: vk::Image,
+    aspect: vk::ImageAspectFlags,
+}
+
+pub struct PassResource<'a> {
+    name: &'a str,
+    image: Option<ImageMetadata>,
+}
+
 pub struct Pass<'a, T> {
-    reads: Vec<&'a str>,
-    writes: Vec<&'a str>,
+    reads: Vec<PassResource<'a>>,
+    writes: Vec<PassResource<'a>>,
     pipeline: vk::Pipeline,
     constants: &'a [u8],
     // TODO: Fn or FnOnce?
@@ -165,17 +240,50 @@ impl<'a, T> Pass<'a, T> {
         }
     }
 
-    pub fn read(mut self, name: &'a str) -> Self {
-        self.reads.push(name);
+    pub fn read_buffer(mut self, name: &'a str) -> Self {
+        self.reads.push(PassResource { name, image: None });
         self
     }
 
-    pub fn write(mut self, name: &'a str) -> Self {
-        self.writes.push(name);
+    // TODO: handle temporal texture ie. TAA History
+    pub fn read_image(
+        mut self,
+        name: &'a str,
+        image: vk::Image,
+        aspect: vk::ImageAspectFlags,
+    ) -> Self {
+        self.reads.push(PassResource {
+            name,
+            image: Some(ImageMetadata { image, aspect }),
+        });
+        self
+    }
 
-        // This handles WAW
-        // TODO: if we automate with fine grained barriers, reevaluate how this affects access_mask; for a gigabarrier this is fine
-        self.reads.push(name);
+    // This implicitly handles WAW
+    // TODO: if we automate with fine grained barriers, reevaluate how our handling of WAW could affect access_mask; for a gigabarrier this is fine
+    pub fn write_buffer(mut self, name: &'a str) -> Self {
+        self.writes.push(PassResource { name, image: None });
+        self.reads.push(PassResource { name, image: None });
+        self
+    }
+
+    pub fn write_image(
+        mut self,
+        name: &'a str,
+        image: vk::Image,
+        aspect: vk::ImageAspectFlags,
+    ) -> Self {
+        let image_metadata = ImageMetadata { image, aspect };
+
+        self.writes.push(PassResource {
+            name,
+            image: Some(image_metadata),
+        });
+        self.reads.push(PassResource {
+            name,
+            image: Some(image_metadata),
+        });
+
         self
     }
 
@@ -237,6 +345,7 @@ impl<'a> Pass<'a, GraphicsPass> {
         }))
     }
 
+    // TODO: can this replace some of the read/write work?
     pub fn render_target(mut self, image: &Image, load_op: vk::AttachmentLoadOp) -> Self {
         if let RenderPass::Graphics(data) = &mut self.render_pass {
             data.render_targets.push(AttachmentDesc {
@@ -249,6 +358,7 @@ impl<'a> Pass<'a, GraphicsPass> {
         self
     }
 
+    // TODO: can this replace some of the read/write work?
     pub fn depth_target(mut self, image: &Image, load_op: vk::AttachmentLoadOp) -> Self {
         if let RenderPass::Graphics(data) = &mut self.render_pass {
             data.depth_target = Some(AttachmentDesc {
