@@ -30,7 +30,7 @@ pub fn create_swapchain(
 ) -> Swapchain {
     let swapchain_loader = swapchain::Device::new(instance, device);
 
-    let swapchain_format = get_swapchain_format(&surface_loader, pdevice, surface);
+    let swapchain_format = get_swapchain_format(surface_loader, pdevice, surface);
 
     let surface_capabilities = unsafe {
         surface_loader
@@ -63,7 +63,7 @@ pub fn create_swapchain(
         surface_capabilities.current_transform
     };
 
-    let present_mode = get_present_mode(&surface_loader, pdevice, surface);
+    let present_mode = get_present_mode(surface_loader, pdevice, surface);
 
     let mut swapchain_create_info = vk::SwapchainCreateInfoKHR::default()
         .surface(surface)
@@ -115,7 +115,7 @@ pub fn create_swapchain(
 
     Swapchain {
         loader: swapchain_loader,
-        swapchain: swapchain,
+        swapchain,
         format: swapchain_format,
         extent: surface_resolution,
         images: swapchain_images,

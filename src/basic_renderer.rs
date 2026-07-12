@@ -16,6 +16,12 @@ impl CullRenderer {
     }
 }
 
+impl Default for CullRenderer {
+    fn default() -> Self {
+        CullRenderer::new()
+    }
+}
+
 #[repr(C)]
 #[derive(Default)]
 pub struct CullConstants {
@@ -44,6 +50,12 @@ impl MeshRenderer {
     }
 }
 
+impl Default for MeshRenderer {
+    fn default() -> Self {
+        MeshRenderer::new()
+    }
+}
+
 #[repr(C)]
 #[derive(Default)]
 pub struct MeshConstants {
@@ -69,5 +81,11 @@ impl CopyRenderer {
         Self {
             constants: CopyConstants::default(),
         }
+    }
+}
+
+impl Default for CopyRenderer {
+    fn default() -> Self {
+        CopyRenderer::new()
     }
 }

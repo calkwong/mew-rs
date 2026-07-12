@@ -70,13 +70,11 @@ fn get_indices(
     out_buffer.extend((0..count).map(|i| {
         let vertex_offset = start + i * byte_stride;
 
-        let index = u16::from_le_bytes(
+        u16::from_le_bytes(
             buffer_data[vertex_offset..vertex_offset + byte_size]
                 .try_into()
                 .unwrap(),
-        ) as u32;
-
-        index
+        ) as u32
     }));
 
     count as u32
@@ -222,7 +220,7 @@ pub fn load_gltf(path: &str) -> Scene {
 
             // For global combined index buffer
             meshes.push(Mesh {
-                vertex_offset: vertex_offset,
+                vertex_offset,
                 first_index,
                 index_count,
                 radius,
@@ -248,21 +246,20 @@ pub fn load_gltf(path: &str) -> Scene {
     let mut nodes: Vec<Node> = Vec::new();
     let mut node_transforms: Vec<NodeTransform> = Vec::new();
     for gltf_node in &gltf.nodes {
-        let new_node: Node;
-        match gltf_node.mesh {
+        let new_node = match gltf_node.mesh {
             Some(index) => {
-                new_node = Node {
+                Node {
                     mesh: Some(mesh_assets[index]),
                     children: gltf_node.children.clone(),
-                };
+                }
             }
             None => {
-                new_node = Node {
+                Node {
                     mesh: None,
                     children: gltf_node.children.clone(),
-                };
+                }
             }
-        }
+        };
         nodes.push(new_node);
 
         let local_transform = if let Some(matrix) = gltf_node.matrix {
@@ -297,7 +294,7 @@ pub fn load_gltf(path: &str) -> Scene {
         if let Some(mesh) = node.mesh {
             (0..mesh.count).for_each(|i| {
                 renderables.push(ObjectData {
-                    world_transform: node_transforms[index as usize].world_transform,
+                    world_transform: node_transforms[index].world_transform,
                     mesh_id: mesh.mesh_id + i,
                 })
             });

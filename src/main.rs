@@ -61,11 +61,11 @@ impl Renderer {
         let device = &backend.device;
 
         let allocator = (*backend.allocator).clone();
-        let mut allocator = &mut allocator.lock().unwrap();
+        let allocator = &mut allocator.lock().unwrap();
 
         let draw_image = mew::create_image(
-            &device,
-            &mut allocator,
+            device,
+            allocator,
             backend.swapchain.extent,
             vk::Format::R16G16B16A16_SFLOAT,
             vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_SRC,
@@ -74,8 +74,8 @@ impl Renderer {
         );
 
         let depth_image = mew::create_image(
-            &device,
-            &mut allocator,
+            device,
+            allocator,
             backend.swapchain.extent,
             vk::Format::D32_SFLOAT,
             vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
@@ -97,11 +97,11 @@ impl Renderer {
         let cull_shader = mew::load_shader(device, "shaders/compiled/culling.spv");
 
         let cull_pipeline =
-            mew::create_compute_pipeline(&device, backend.pipeline_layout, cull_shader);
+            mew::create_compute_pipeline(device, backend.pipeline_layout, cull_shader);
         let copy_pipeline =
-            mew::create_compute_pipeline(&device, backend.pipeline_layout, copy_shader);
+            mew::create_compute_pipeline(device, backend.pipeline_layout, copy_shader);
         let draw_pipeline = mew::create_graphics_pipeline(
-            &device,
+            device,
             backend.pipeline_layout,
             draw_shader,
             &[vk::ShaderStageFlags::VERTEX, vk::ShaderStageFlags::FRAGMENT],
@@ -123,11 +123,10 @@ impl Renderer {
             backend.graphics_queue,
             backend.frame_resources[0].command_pool,
             backend.frame_resources[0].command_buffer,
-            &mut allocator,
+            allocator,
             vk::BufferUsageFlags::STORAGE_BUFFER
                 | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
                 | vk::BufferUsageFlags::TRANSFER_DST,
-            vertices.len() as u64,
             vertices,
         );
 
@@ -137,12 +136,11 @@ impl Renderer {
             backend.graphics_queue,
             backend.frame_resources[0].command_pool,
             backend.frame_resources[0].command_buffer,
-            &mut allocator,
+            allocator,
             vk::BufferUsageFlags::STORAGE_BUFFER
                 | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
                 | vk::BufferUsageFlags::TRANSFER_DST
                 | vk::BufferUsageFlags::INDEX_BUFFER,
-            indices.len() as u64,
             indices,
         );
 
@@ -152,11 +150,10 @@ impl Renderer {
             backend.graphics_queue,
             backend.frame_resources[0].command_pool,
             backend.frame_resources[0].command_buffer,
-            &mut allocator,
+            allocator,
             vk::BufferUsageFlags::STORAGE_BUFFER
                 | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
                 | vk::BufferUsageFlags::TRANSFER_DST,
-            meshes.len() as u64,
             meshes,
         );
 
@@ -166,17 +163,16 @@ impl Renderer {
             backend.graphics_queue,
             backend.frame_resources[0].command_pool,
             backend.frame_resources[0].command_buffer,
-            &mut allocator,
+            allocator,
             vk::BufferUsageFlags::STORAGE_BUFFER
                 | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
                 | vk::BufferUsageFlags::TRANSFER_DST,
-            objects.len() as u64,
             objects,
         );
 
         let draw_indirect_buffer = mew::create_buffer(
             device,
-            &mut allocator,
+            allocator,
             gpu_allocator::MemoryLocation::GpuOnly,
             vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
                 | vk::BufferUsageFlags::STORAGE_BUFFER
@@ -187,7 +183,7 @@ impl Renderer {
 
         let dispatch_buffer = mew::create_buffer(
             device,
-            &mut allocator,
+            allocator,
             gpu_allocator::MemoryLocation::GpuOnly,
             vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
                 | vk::BufferUsageFlags::STORAGE_BUFFER
@@ -196,7 +192,7 @@ impl Renderer {
             (3 * std::mem::size_of::<u32>()) as u64,
         );
 
-        let this = Self {
+        Self {
             window,
             backend,
             camera,
@@ -220,9 +216,7 @@ impl Renderer {
             object_buffer,
             draw_indirect_buffer,
             dispatch_buffer,
-        };
-
-        this
+        }
     }
 }
 
@@ -263,7 +257,7 @@ struct App {
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if let Some(_) = self.renderer.as_ref() {
+        if self.renderer.is_some() {
             return;
         }
 
@@ -291,15 +285,12 @@ impl ApplicationHandler for App {
         _device_id: DeviceId,
         event: DeviceEvent,
     ) {
-        match event {
-            winit::event::DeviceEvent::MouseMotion { delta } => {
-                if let Some(renderer) = self.renderer.as_mut() {
-                    renderer
-                        .camera
-                        .process_mouse_input(delta.0 as f32, delta.1 as f32);
-                }
-            }
-            _ => {}
+        if let winit::event::DeviceEvent::MouseMotion { delta } = event
+            && let Some(renderer) = self.renderer.as_mut()
+        {
+            renderer
+                .camera
+                .process_mouse_input(delta.0 as f32, delta.1 as f32);
         }
     }
 
@@ -418,7 +409,7 @@ fn render_loop(renderer: &mut Renderer) {
     let view = renderer.camera.get_view_matrix();
     let proj = mew::get_infinite_reverse_perspective_matrix(
         renderer.camera.fovy,
-        aspect as f32,
+        aspect,
         renderer.camera.near,
     );
     let view_proj = proj * view;
@@ -590,8 +581,16 @@ fn render_loop(renderer: &mut Renderer) {
             Pass::new_graphics()
                 .read_buffer("draw_indirect")
                 .read_buffer("dispatch")
-                .render_target("draw", &renderer.framebuffer.draw_image, vk::AttachmentLoadOp::CLEAR)
-                .depth_target("depth", &renderer.framebuffer.depth_image, vk::AttachmentLoadOp::CLEAR)
+                .render_target(
+                    "draw",
+                    &renderer.framebuffer.draw_image,
+                    vk::AttachmentLoadOp::CLEAR,
+                )
+                .depth_target(
+                    "depth",
+                    &renderer.framebuffer.depth_image,
+                    vk::AttachmentLoadOp::CLEAR,
+                )
                 .constants(mew::push_constants_as_bytes(&renderer.mesh.constants))
                 .pipeline(renderer.draw_pipeline)
                 .draw_indirect(
@@ -619,8 +618,16 @@ fn render_loop(renderer: &mut Renderer) {
         let group_count_y = mew::get_group_count(renderer.backend.swapchain.extent.height, 8);
         rdg.add_pass(
             Pass::new_compute()
-                .read_image("draw", renderer.framebuffer.draw_image.image, vk::ImageAspectFlags::COLOR)
-                .write_image("swapchain", renderer.backend.swapchain.images[swapchain_idx], vk::ImageAspectFlags::COLOR)
+                .read_image(
+                    "draw",
+                    renderer.framebuffer.draw_image.image,
+                    vk::ImageAspectFlags::COLOR,
+                )
+                .write_image(
+                    "swapchain",
+                    renderer.backend.swapchain.images[swapchain_idx],
+                    vk::ImageAspectFlags::COLOR,
+                )
                 .constants(mew::push_constants_as_bytes(&renderer.copy.constants))
                 .pipeline(renderer.copy_pipeline)
                 .dispatch(group_count_x, group_count_y, 1),
@@ -643,7 +650,8 @@ fn render_loop(renderer: &mut Renderer) {
         .dst_access_mask(vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE)
         .subresource_range(mew::image_subresource_range(vk::ImageAspectFlags::COLOR))];
 
-    let dependency_info = vk::DependencyInfo::default().image_memory_barriers(&image_memory_barrier);
+    let dependency_info =
+        vk::DependencyInfo::default().image_memory_barriers(&image_memory_barrier);
     unsafe { device.cmd_pipeline_barrier2(cmd, &dependency_info) };
 
     unsafe {
@@ -724,7 +732,7 @@ fn recreate_resources_on_swapchain_resize(renderer: &mut Renderer) {
 
     // Recreate resources
     renderer.framebuffer.draw_image = mew::create_image(
-        &device,
+        device,
         &mut allocator,
         renderer.backend.swapchain.extent,
         vk::Format::R16G16B16A16_SFLOAT,
@@ -736,7 +744,7 @@ fn recreate_resources_on_swapchain_resize(renderer: &mut Renderer) {
     );
 
     renderer.framebuffer.depth_image = mew::create_image(
-        &device,
+        device,
         &mut allocator,
         renderer.backend.swapchain.extent,
         vk::Format::D32_SFLOAT,

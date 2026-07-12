@@ -4,7 +4,6 @@ use ash::{
     khr::surface,
     vk::{self, DebugUtilsMessengerEXT, Queue, Semaphore},
 };
-use ash_window;
 use gpu_allocator::MemoryLocation;
 use gpu_allocator::vulkan::*;
 use std::{
@@ -203,8 +202,7 @@ impl Device {
             .queue_family_index(queue_family_index)
             .queue_priorities(&priorities);
 
-        let mut queue_infos: Vec<vk::DeviceQueueCreateInfo> = Vec::new();
-        queue_infos.push(queue_create_info);
+        let queue_infos: Vec<vk::DeviceQueueCreateInfo> = vec![queue_create_info];
 
         // check extension support
         let device_extension_names_raw = [ash::khr::swapchain::NAME.as_ptr()];
@@ -292,7 +290,7 @@ impl Device {
             surface,
             pdevice,
             &device,
-            &window,
+            window,
             vk::SwapchainKHR::null(),
         );
 
@@ -644,6 +642,7 @@ impl Drop for Device {
     }
 }
 
+/// # Safety
 pub unsafe extern "system" fn vulkan_debug_callback(
     message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
     message_type: vk::DebugUtilsMessageTypeFlagsEXT,
@@ -786,6 +785,7 @@ pub fn create_graphics_pipeline(
     pipelines[0]
 }
 
+#[allow(clippy::manual_div_ceil)]
 pub fn get_group_count(size: u32, threads: u32) -> u32 {
     (size + threads - 1) / threads
 }
@@ -853,6 +853,7 @@ pub fn create_buffer(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn create_buffer_with_data(
     device: &ash::Device,
     queue: Queue,
@@ -860,9 +861,10 @@ pub fn create_buffer_with_data(
     cmd: vk::CommandBuffer,
     allocator: &mut Allocator,
     flags: vk::BufferUsageFlags,
-    size: u64,
     data: &[u8],
 ) -> Buffer {
+    let size = data.len() as u64;
+
     let mut staging_buffer = create_buffer(
         device,
         allocator,
@@ -908,6 +910,8 @@ pub fn create_buffer_with_data(
     buffer
 }
 
+
+#[allow(clippy::too_many_arguments)]
 pub fn create_image_with_data(
     device: &ash::Device,
     queue: Queue,
@@ -919,9 +923,10 @@ pub fn create_image_with_data(
     usage: vk::ImageUsageFlags,
     aspect: vk::ImageAspectFlags,
     _mip: bool,
-    size: u64,
     data: &[u8],
 ) -> Image {
+    let size = data.len() as u64;
+
     let mut staging_buffer = create_buffer(
         device,
         allocator,
@@ -946,7 +951,7 @@ pub fn create_image_with_data(
         device.begin_command_buffer(cmd, &cmd_begin_info).unwrap();
     }
 
-    image_giga_barrier(&device, cmd, image.image);
+    image_giga_barrier(device, cmd, image.image);
 
     let image_subresource = vk::ImageSubresourceLayers::default()
         .aspect_mask(vk::ImageAspectFlags::COLOR)
@@ -986,7 +991,7 @@ pub fn create_image_with_data(
         device.device_wait_idle().unwrap();
     }
 
-    destroy_buffer(&device, allocator, &mut staging_buffer);
+    destroy_buffer(device, allocator, &mut staging_buffer);
 
     image
 }
@@ -1068,7 +1073,7 @@ pub fn destroy_image(device: &ash::Device, allocator: &mut Allocator, image: &mu
 
 pub fn image_subresource_range(aspect_mask: vk::ImageAspectFlags) -> vk::ImageSubresourceRange {
     vk::ImageSubresourceRange {
-        aspect_mask: aspect_mask,
+        aspect_mask,
         base_mip_level: 0,
         level_count: vk::REMAINING_MIP_LEVELS,
         base_array_layer: 0,
@@ -1126,15 +1131,12 @@ pub fn get_infinite_reverse_perspective_matrix(fovy: f32, aspect: f32, near: f32
 }
 
 // TODO: bytemuck?
-pub fn as_bytes<T>(t: &Vec<T>) -> &[u8] {
-    let len = t.len() * std::mem::size_of::<T>();
-    let slice = unsafe { std::slice::from_raw_parts(t.as_ptr() as *const u8, len) };
-
-    slice
+pub fn as_bytes<T>(t: &[T]) -> &[u8] {
+    let len = size_of_val(t);
+    unsafe { std::slice::from_raw_parts(t.as_ptr() as *const u8, len) }
 }
 
 // TODO: bytemuck?
 pub fn push_constants_as_bytes<T>(t: &T) -> &[u8] {
-    let slice = unsafe { std::slice::from_raw_parts((t as *const T) as *const u8, std::mem::size_of::<T>()) };
-    slice
+    unsafe { std::slice::from_raw_parts((t as *const T) as *const u8, std::mem::size_of::<T>()) }
 }

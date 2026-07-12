@@ -73,7 +73,7 @@ pub fn create_descriptor_pool(
 ) -> vk::DescriptorPool {
     let descriptor_pool_info = vk::DescriptorPoolCreateInfo::default()
         .max_sets(4)
-        .pool_sizes(&pool_size);
+        .pool_sizes(pool_size);
 
     unsafe {
         device

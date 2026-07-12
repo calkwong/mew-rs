@@ -13,6 +13,7 @@ pub struct Rendergraph<'a> {
     resource_states: Vec<ResourceState<'a>>,
     dependencies: Vec<Vec<usize>>,
     execution_groups: Vec<Vec<usize>>,
+    #[allow(clippy::type_complexity)]
     executes: Vec<Box<dyn Fn(&ash::Device, vk::CommandBuffer, vk::PipelineLayout) + 'a>>,
     images: Vec<vk::Image>,
     depth_image: Option<vk::Image>,
@@ -22,6 +23,12 @@ struct ResourceState<'a> {
     name: &'a str,
     last_write: Option<usize>,
     reads_since_last_write: Vec<usize>,
+}
+
+impl<'a> Default for Rendergraph<'a> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<'a> Rendergraph<'a> {
@@ -55,17 +62,17 @@ impl<'a> Rendergraph<'a> {
             } else {
                 self.resource_to_id.insert(name, self.resource_states.len());
                 self.resource_states.push(ResourceState {
-                    name: *name,
+                    name,
                     last_write: None,
                     reads_since_last_write: vec![pass_id],
                 });
                 if let Some(image_metadata) = image {
-                    match (*image_metadata).aspect {
+                    match image_metadata.aspect {
                         vk::ImageAspectFlags::DEPTH => {
-                            self.depth_image = Some((*image_metadata).image);
+                            self.depth_image = Some(image_metadata.image);
                         }
                         vk::ImageAspectFlags::COLOR => {
-                            self.images.push((*image_metadata).image);
+                            self.images.push(image_metadata.image);
                         }
                         _ => {
                             panic!("This should not execute!");
@@ -88,17 +95,17 @@ impl<'a> Rendergraph<'a> {
             } else {
                 self.resource_to_id.insert(name, self.resource_states.len());
                 self.resource_states.push(ResourceState {
-                    name: *name,
+                    name,
                     last_write: Some(pass_id),
                     reads_since_last_write: Vec::new(),
                 });
                 if let Some(image_metadata) = image {
-                    match (*image_metadata).aspect {
+                    match image_metadata.aspect {
                         vk::ImageAspectFlags::DEPTH => {
-                            self.depth_image = Some((*image_metadata).image);
+                            self.depth_image = Some(image_metadata.image);
                         }
                         vk::ImageAspectFlags::COLOR => {
-                            self.images.push((*image_metadata).image);
+                            self.images.push(image_metadata.image);
                         }
                         _ => {
                             panic!("This should not execute!");
@@ -140,7 +147,7 @@ impl<'a> Rendergraph<'a> {
                 level = level.max(dep_level);
             }
         }
-        level = level + 1;
+        level += 1;
         dependency_map[index] = Some(level);
         dependency_levels[level as usize].push(index);
         level
@@ -186,7 +193,7 @@ impl<'a> Rendergraph<'a> {
         unsafe { device.cmd_pipeline_barrier2(cmd, &dependency_info) };
 
         for group in &self.execution_groups {
-            if group.len() > 0 {
+            if !group.is_empty() {
                 for execute_id in group {
                     (self.executes[*execute_id])(device, cmd, layout);
                 }
@@ -222,7 +229,7 @@ pub struct Pass<'a, T> {
     writes: Vec<PassResource<'a>>,
     pipeline: vk::Pipeline,
     constants: &'a [u8],
-    // TODO: Fn or FnOnce?
+    #[allow(clippy::type_complexity)]
     execute: Box<dyn Fn(&ash::Device, vk::CommandBuffer, vk::PipelineLayout) + 'a>,
     render_pass: RenderPass,
     _marker: PhantomData<T>,
@@ -368,6 +375,7 @@ impl<'a> Pass<'a, GraphicsPass> {
         self
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn draw_indirect(
         mut self,
         buffer: vk::Buffer,
