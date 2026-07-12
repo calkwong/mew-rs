@@ -12,8 +12,8 @@ pub struct Scene {
 
 #[allow(dead_code)]
 pub struct ObjectData {
-    world_transform: Mat4,
-    mesh_id: u32,
+    pub world_transform: Mat4,
+    pub mesh_id: u32,
 }
 
 pub struct Node {

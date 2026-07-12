@@ -190,4 +190,5 @@ fn get_present_mode(
         .cloned()
         .find(|&mode| mode == vk::PresentModeKHR::MAILBOX)
         .unwrap_or(vk::PresentModeKHR::FIFO)
+        // .unwrap_or(vk::PresentModeKHR::IMMEDIATE)
 }

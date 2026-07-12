@@ -158,6 +158,33 @@ impl Renderer {
         );
 
         let objects = mew::as_bytes(&scene.renderables);
+
+        let mut instances: Vec<mew::loader::ObjectData> = Vec::new();
+        let n = 10;
+        let grid_size = 50.0;
+        let step = grid_size / (n as f32);
+        let scale = grid_size / 2.0;
+
+        for i in 0..n {
+            for j in 0..n {
+                for k in 0..n {
+                    let x = (i as f32) * step - scale;
+                    let y = (j as f32) * step - scale;
+                    let z = (k as f32) * -step;
+
+                    for obj in &scene.renderables {
+                        instances.push(mew::loader::ObjectData {
+                            world_transform: glam::Mat4::from_translation(glam::Vec3::new(x, y, z))
+                                * obj.world_transform,
+                            mesh_id: obj.mesh_id,
+                        });
+                    }
+                }
+            }
+        }
+
+        let instances = mew::as_bytes(&instances);
+
         let object_buffer = mew::create_buffer_with_data(
             device,
             backend.graphics_queue,
@@ -167,7 +194,8 @@ impl Renderer {
             vk::BufferUsageFlags::STORAGE_BUFFER
                 | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
                 | vk::BufferUsageFlags::TRANSFER_DST,
-            objects,
+            // objects,
+            instances,
         );
 
         let draw_indirect_buffer = mew::create_buffer(
@@ -177,8 +205,8 @@ impl Renderer {
             vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
                 | vk::BufferUsageFlags::STORAGE_BUFFER
                 | vk::BufferUsageFlags::INDIRECT_BUFFER,
-            (scene.renderables.len() * std::mem::size_of::<vk::DrawIndexedIndirectCommand>())
-                as u64,
+            // (scene.renderables.len() * std::mem::size_of::<vk::DrawIndexedIndirectCommand>())
+            (instances.len() * std::mem::size_of::<vk::DrawIndexedIndirectCommand>()) as u64,
         );
 
         let dispatch_buffer = mew::create_buffer(
