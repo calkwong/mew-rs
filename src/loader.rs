@@ -1,7 +1,7 @@
 use crate as mew;
 use ash::vk::{self, Queue};
 use glam::Vec4;
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Vec3, Vec2};
 use gpu_allocator::vulkan::Allocator;
 use mew::Image;
 use mew::create_sampled_image;
@@ -58,9 +58,9 @@ pub struct Mesh {
 #[allow(dead_code)]
 pub struct Vertex {
     pos: Vec3,
-    padding: f32,
+    uv_x: f32,
     normal: Vec3,
-    padding2: f32,
+    uv_y: f32,
 }
 
 fn get_indices(
@@ -173,6 +173,44 @@ fn get_normals(
     }))
 }
 
+fn get_uv(
+    gltf: &goth_gltf::Gltf<goth_gltf::default_extensions::Extensions>,
+    buffer_data: &[u8],
+    accessor_index: usize,
+) -> Vec<Vec2> {
+    let accessor = &gltf.accessors[accessor_index];
+    let buffer_view = &gltf.buffer_views[accessor.buffer_view.unwrap()];
+
+    let accessor_byte_offset = &accessor.byte_offset;
+    let buffer_view_byte_offset = buffer_view.byte_offset;
+
+    let start = accessor_byte_offset + buffer_view_byte_offset;
+    let count = accessor.count;
+
+    let byte_size = accessor.component_type.byte_size();
+    assert_eq!(byte_size, 4);
+    let byte_stride = buffer_view.byte_stride.unwrap_or(byte_size * 2);
+
+    (0..count)
+        .map(|i| {
+            let vertex_offset = start + i * byte_stride;
+
+            let get = |k: usize| {
+                f32::from_le_bytes(
+                    buffer_data[vertex_offset + byte_size * k..vertex_offset + byte_size * (k + 1)]
+                        .try_into()
+                        .unwrap(),
+                )
+            };
+
+            let x = get(0);
+            let y = get(1);
+
+            Vec2 { x, y }
+        })
+        .collect()
+}
+
 pub fn load_gltf(
     path: &str,
     device: &ash::Device,
@@ -206,6 +244,7 @@ pub fn load_gltf(
     let mut indices: Vec<u32> = Vec::new();
     let mut positions: Vec<Vec3> = Vec::new();
     let mut normals: Vec<Vec3> = Vec::new();
+    let mut uvs: Vec<Vec2> = Vec::new();
 
     let mut materials: Vec<MaterialData> = Vec::new();
     for m in &gltf.materials {
@@ -255,10 +294,12 @@ pub fn load_gltf(
 
             positions.extend(new_positions);
 
+            // TODO: don't modify in fn
             let normal_idx = primitive.attributes.normal.unwrap();
             get_normals(&gltf, buffer_data, &mut normals, normal_idx);
 
-            assert_eq!(positions.len(), normals.len());
+            let uv_idx = primitive.attributes.texcoord_0.unwrap();
+            uvs.extend(get_uv(&gltf, buffer_data, uv_idx));
 
             if let Some(mat) = primitive.material {
                 material_ids.push(mat as _);
@@ -278,6 +319,22 @@ pub fn load_gltf(
 
         mesh_assets.push(mesh);
     }
+
+    assert_eq!(positions.len(), normals.len());
+    assert_eq!(positions.len(), uvs.len());
+    let vertices: Vec<Vertex> = (0..positions.len()).map(|i| {
+        let pos = positions[i];
+        let normal = normals[i];
+        let uv = uvs[i];
+
+        Vertex {
+            pos,
+            uv_x: uv[0],
+            normal,
+            uv_y: uv[1],
+        }
+
+    }).collect();
 
     // Read file -> decompress data -> transcode -> upload to GPU
     let images: Vec<Image> = gltf
@@ -363,17 +420,6 @@ pub fn load_gltf(
                 &data,
                 Some(ktx2.levels().len()),
             )
-        })
-        .collect();
-
-    // May need to move into loop above
-    let iter = std::iter::zip(positions, normals);
-    let vertices: Vec<Vertex> = iter
-        .map(|(pos, normal)| Vertex {
-            pos,
-            padding: 0.0,
-            normal,
-            padding2: 0.0,
         })
         .collect();
 

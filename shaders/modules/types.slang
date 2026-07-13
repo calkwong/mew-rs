@@ -20,9 +20,9 @@ public struct Mesh
 public struct Vertex
 {
     public float3 pos;
-    float padding;
+    public float uv_x;
     public float3 normal;
-    float padding2;
+    public float uv_y;
 }
 
 public struct DrawIndirect
