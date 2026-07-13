@@ -1,5 +1,5 @@
 use ash::vk::{self, Fence};
-use glam::Vec4Swizzles;
+use glam::{Vec4Swizzles};
 use mew::descriptors::RenderResourceTag;
 use mew::loader::load_gltf;
 use mew::rendergraph::{Pass, Rendergraph};
@@ -57,9 +57,10 @@ struct Renderer {
 struct Framebuffer {
     draw_image: mew::Image,
     depth_image: mew::Image,
-    draw_index: u32,
-    swapchain_indices: Vec<u32>,
     depth_pyramid: mew::Image,
+    draw_index: u32,
+    depth_index: u32,
+    swapchain_indices: Vec<u32>,
     depth_pyramid_sample_index: u32,
     depth_pyramid_storage_index: u32,
     depth_pyramid_views: [vk::ImageView; 11],
@@ -92,18 +93,18 @@ impl Renderer {
             vk::ImageAspectFlags::COLOR,
             None,
         );
+        let draw_index = backend.register_image(draw_image.view, RenderResourceTag::Storage);
 
         let depth_image = mew::create_image(
             device,
             allocator,
             backend.swapchain.extent,
             vk::Format::D32_SFLOAT,
-            vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+            vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
             vk::ImageAspectFlags::DEPTH,
             None,
         );
-
-        let draw_index = backend.register_image(draw_image.view, RenderResourceTag::Storage);
+        let depth_index = backend.register_image(depth_image.view, RenderResourceTag::Sampled);
 
         let swapchain_indices: Vec<u32> = backend
             .swapchain
@@ -325,6 +326,7 @@ impl Renderer {
             framebuffer: Framebuffer {
                 draw_image,
                 depth_image,
+                depth_index,
                 draw_index,
                 swapchain_indices,
                 depth_pyramid,
@@ -752,13 +754,21 @@ fn render_loop(renderer: &mut Renderer) {
     }
 
     // {
+    //     let width = mew::next_power_of_two(renderer.framebuffer.depth_pyramid.extent.width);
+    //     let height = mew::next_power_of_two(renderer.framebuffer.depth_pyramid.extent.height);
+    //     let groupcount_x = mew::get_group_count(width, 64);
+    //     let groupcount_y = mew::get_group_count(height, 64);
+
+    //     let hiz_width = renderer.framebuffer.depth_pyramid.extent.width;
+    //     let hiz_height = renderer.framebuffer.depth_pyramid.extent.height;
+
     //     renderer.spd.constants = basic_renderer::SpdConstants {
     //         spd_buffer: renderer.spd_buffer.address,
-    //         rcp_resolution: (),
-    //         mips: (),
-    //         num_wgs: (),
-    //         src_id: (),
-    //         dst_id: (),
+    //         rcp_resolution: Vec2::ONE / Vec2::new(width as _, height as _),
+    //         mips: hiz_width.max(hiz_height).ilog2() + 1,
+    //         num_wgs: groupcount_x * groupcount_y,
+    //         src_id: renderer.framebuffer.depth_index,
+    //         dst_id: renderer.framebuffer.depth_pyramid_storage_index,
     //     }
     // }
 
@@ -883,7 +893,11 @@ fn on_swapchain_resize(renderer: &mut Renderer) {
         &mut allocator,
         &mut renderer.framebuffer.depth_image,
     );
-    mew::destroy_image(device, &mut allocator, &mut renderer.framebuffer.depth_pyramid);
+    mew::destroy_image(
+        device,
+        &mut allocator,
+        &mut renderer.framebuffer.depth_pyramid,
+    );
 
     // Recreate resources
     renderer.framebuffer.draw_image = mew::create_image(
@@ -903,7 +917,7 @@ fn on_swapchain_resize(renderer: &mut Renderer) {
         &mut allocator,
         renderer.backend.swapchain.extent,
         vk::Format::D32_SFLOAT,
-        vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+        vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
         vk::ImageAspectFlags::DEPTH,
         None,
     );
@@ -953,6 +967,11 @@ fn on_swapchain_resize(renderer: &mut Renderer) {
         renderer.framebuffer.draw_image.view,
         RenderResourceTag::Storage,
     );
+    renderer.backend.update_image_descriptor(
+        renderer.framebuffer.depth_index,
+        renderer.framebuffer.depth_image.view,
+        RenderResourceTag::Sampled,
+    );
 
     for (index, view) in renderer
         .framebuffer
@@ -964,6 +983,23 @@ fn on_swapchain_resize(renderer: &mut Renderer) {
             .backend
             .update_image_descriptor(*index, *view, RenderResourceTag::Storage);
     }
+
+    renderer.backend.update_image_descriptor(
+        renderer.framebuffer.depth_pyramid_sample_index,
+        renderer.framebuffer.depth_pyramid.view,
+        RenderResourceTag::Sampled,
+    );
+
+    // TODO: verify this is correct
+    // Only updating relevant descriptors, which is hiz_mips count
+    (0..hiz_mips).for_each(|i| {
+        let view = &renderer.framebuffer.depth_pyramid_views[i as usize];
+        renderer.backend.update_image_descriptor(
+            i + renderer.framebuffer.depth_pyramid_storage_index,
+            *view,
+            RenderResourceTag::Storage,
+        );
+    });
 }
 
 fn main() {
