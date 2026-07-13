@@ -1,5 +1,5 @@
 use ash::vk;
-use glam::Mat4;
+use glam::{Mat4, Vec2};
 
 // TODO: split rendering techniques into modules, where modules store their push constant data and resources they create
 // dump each renderer modules into top level renderer that wraps everything into a giant struct?
@@ -89,4 +89,33 @@ impl Default for CopyRenderer {
     fn default() -> Self {
         CopyRenderer::new()
     }
+}
+
+pub struct SpdRenderer {
+    pub constants: SpdConstants,
+}
+
+impl SpdRenderer {
+    pub fn new() -> Self {
+        Self {
+            constants: SpdConstants::default(),
+        }
+    }
+}
+
+impl Default for SpdRenderer {
+    fn default() -> Self {
+        SpdRenderer::new()
+    }
+}
+
+#[repr(C)]
+#[derive(Default)]
+pub struct SpdConstants {
+    pub spd_buffer: vk::DeviceAddress,
+    pub rcp_resolution: Vec2,
+    pub mips: u32,
+    pub num_wgs: u32,
+    pub src_id: u32,
+    pub dst_id: u32,
 }

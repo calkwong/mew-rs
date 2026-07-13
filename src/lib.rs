@@ -1188,3 +1188,13 @@ pub fn create_sampler(
 
     unsafe { device.create_sampler(&info, None).unwrap() }
 }
+
+pub fn nearest_power_of_two(extent: u32) -> u32
+{
+    1 << extent.ilog2()
+}
+
+pub fn next_power_of_two(extent: u32) -> u32
+{
+    nearest_power_of_two(extent) << 1
+}

@@ -33,7 +33,7 @@ void main(uint3 t_id: SV_DispatchThreadID)
 
     float4 color = src_image.Load(t_id.xy);
 
-    color.xyz = linear_to_srgb(reinhard(color.xyz));
+    // color.xyz = linear_to_srgb(reinhard(color.xyz));
 
     dst_image.Store(t_id.xy, float4(color.xyz, 1.0));
 }

@@ -1,15 +1,15 @@
 use ash::vk::{self, Fence};
 use glam::Vec4Swizzles;
-use mew::{basic_renderer, create_sampler};
 use mew::descriptors::RenderResourceTag;
 use mew::loader::load_gltf;
 use mew::rendergraph::{Pass, Rendergraph};
 use mew::swapchain::recreate_swapchain;
 use mew::{
+    Image,
     camera::{Camera, Key, KeyState},
     giga_barrier,
-    Image
 };
+use mew::{basic_renderer, create_sampler};
 use std::time::Instant;
 use winit::{
     application::ApplicationHandler,
@@ -34,10 +34,12 @@ struct Renderer {
     cull: basic_renderer::CullRenderer,
     mesh: basic_renderer::MeshRenderer,
     copy: basic_renderer::CopyRenderer,
+    spd: basic_renderer::SpdRenderer,
 
     copy_pipeline: vk::Pipeline,
     draw_pipeline: vk::Pipeline,
     cull_pipeline: vk::Pipeline,
+    spd_pipeline: vk::Pipeline,
 
     framebuffer: Framebuffer,
     samplers: Vec<vk::Sampler>,
@@ -49,6 +51,7 @@ struct Renderer {
     material_buffer: mew::Buffer,
     draw_indirect_buffer: mew::Buffer,
     dispatch_buffer: mew::Buffer,
+    spd_buffer: mew::Buffer,
 }
 
 struct Framebuffer {
@@ -56,15 +59,21 @@ struct Framebuffer {
     depth_image: mew::Image,
     draw_index: u32,
     swapchain_indices: Vec<u32>,
+    depth_pyramid: mew::Image,
+    depth_pyramid_sample_index: u32,
+    depth_pyramid_storage_index: u32,
+    depth_pyramid_views: [vk::ImageView; 11],
 }
 
 impl Renderer {
     fn new(window: Window) -> Self {
         let backend = mew::Device::new(&window);
 
-        let samplers = vec![
-            create_sampler(&backend.device, vk::Filter::LINEAR, vk::SamplerAddressMode::REPEAT),
-        ];
+        let samplers = vec![create_sampler(
+            &backend.device,
+            vk::Filter::LINEAR,
+            vk::SamplerAddressMode::REPEAT,
+        )];
         backend.register_samplers(&samplers);
 
         let camera = Camera::default().position(glam::Vec3::new(0.0, 0.0, 5.0));
@@ -103,9 +112,50 @@ impl Renderer {
             .map(|view| backend.register_image(*view, RenderResourceTag::Storage))
             .collect();
 
+        let hiz_width = mew::nearest_power_of_two(backend.swapchain.extent.width);
+        let hiz_height = mew::nearest_power_of_two(backend.swapchain.extent.height);
+        let hiz_mips = hiz_width.max(hiz_height).ilog2() + 1;
+        let depth_pyramid = mew::create_image(
+            device,
+            allocator,
+            vk::Extent2D {
+                width: hiz_width,
+                height: hiz_height,
+            },
+            vk::Format::R32_SFLOAT,
+            vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED,
+            vk::ImageAspectFlags::COLOR,
+            Some(hiz_mips as _),
+        );
+        let depth_pyramid_sample_index =
+            backend.register_image(depth_pyramid.view, RenderResourceTag::Sampled);
+        let max_mip_level = hiz_mips - 1;
+        let mut depth_pyramid_storage_index = 0;
+        let depth_pyramid_views = std::array::from_fn(|i| {
+            let view = mew::create_image_view(
+                device,
+                depth_pyramid.image,
+                depth_pyramid.format,
+                vk::ImageViewType::TYPE_2D,
+                vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: i.max(max_mip_level as _) as _,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                },
+            );
+            let handle = backend.register_image(view, RenderResourceTag::Storage);
+            if i == 0 {
+                depth_pyramid_storage_index = handle;
+            }
+            view
+        });
+
         let copy_shader = mew::load_shader(device, "shaders/compiled/copy_swapchain.spv");
         let draw_shader = mew::load_shader(device, "shaders/compiled/mesh.spv");
         let cull_shader = mew::load_shader(device, "shaders/compiled/culling.spv");
+        let spd_shader = mew::load_shader(device, "shaders/compiled/hiz_spd.spv");
 
         let cull_pipeline =
             mew::create_compute_pipeline(device, backend.pipeline_layout, cull_shader);
@@ -118,11 +168,14 @@ impl Renderer {
             &[vk::ShaderStageFlags::VERTEX, vk::ShaderStageFlags::FRAGMENT],
             draw_image.format,
         );
+        let spd_pipeline =
+            mew::create_compute_pipeline(device, backend.pipeline_layout, spd_shader);
 
         unsafe {
             device.destroy_shader_module(copy_shader, None);
             device.destroy_shader_module(draw_shader, None);
             device.destroy_shader_module(cull_shader, None);
+            device.destroy_shader_module(spd_shader, None);
         }
 
         let gltf_path = std::env::args().nth(1).unwrap();
@@ -168,7 +221,7 @@ impl Renderer {
             meshes,
         );
 
-        let objects = mew::as_bytes(&scene.renderables);
+        let _objects = mew::as_bytes(&scene.renderables);
 
         let mut instances: Vec<mew::loader::ObjectData> = Vec::new();
         let n = 10;
@@ -206,8 +259,8 @@ impl Renderer {
             vk::BufferUsageFlags::STORAGE_BUFFER
                 | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
                 | vk::BufferUsageFlags::TRANSFER_DST,
-            objects,
-            // instances,
+            // objects,
+            instances,
         );
 
         let materials = mew::as_bytes(&scene.materials);
@@ -245,6 +298,14 @@ impl Renderer {
             (3 * std::mem::size_of::<u32>()) as u64,
         );
 
+        let spd_buffer = mew::create_buffer(
+            device,
+            allocator,
+            gpu_allocator::MemoryLocation::GpuOnly,
+            vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS | vk::BufferUsageFlags::STORAGE_BUFFER,
+            (std::mem::size_of::<u32>()) as u64,
+        );
+
         Self {
             window,
             backend,
@@ -255,15 +316,21 @@ impl Renderer {
             cull: basic_renderer::CullRenderer::new(),
             mesh: basic_renderer::MeshRenderer::new(),
             copy: basic_renderer::CopyRenderer::new(),
+            spd: basic_renderer::SpdRenderer::new(),
             copy_pipeline,
             draw_pipeline,
             cull_pipeline,
+            spd_pipeline,
             samplers,
             framebuffer: Framebuffer {
                 draw_image,
                 depth_image,
                 draw_index,
                 swapchain_indices,
+                depth_pyramid,
+                depth_pyramid_sample_index,
+                depth_pyramid_storage_index,
+                depth_pyramid_views,
             },
             vertex_buffer,
             index_buffer,
@@ -272,6 +339,7 @@ impl Renderer {
             material_buffer,
             draw_indirect_buffer,
             dispatch_buffer,
+            spd_buffer,
         }
     }
 }
@@ -291,16 +359,23 @@ impl Drop for Renderer {
             let mut allocator = self.backend.allocator.lock().unwrap();
 
             // Destroy resources
-            self.scene_images.iter_mut().for_each(|img|{
+            self.scene_images.iter_mut().for_each(|img| {
                 mew::destroy_image(device, &mut allocator, img);
             });
 
-            self.samplers.iter().for_each(|samp|{
+            self.samplers.iter().for_each(|samp| {
                 device.destroy_sampler(*samp, None);
             });
 
             mew::destroy_image(device, &mut allocator, &mut self.framebuffer.draw_image);
             mew::destroy_image(device, &mut allocator, &mut self.framebuffer.depth_image);
+            mew::destroy_image(device, &mut allocator, &mut self.framebuffer.depth_pyramid);
+            self.framebuffer
+                .depth_pyramid_views
+                .iter()
+                .for_each(|view| {
+                    device.destroy_image_view(*view, None);
+                });
             mew::destroy_buffer(device, &mut allocator, &mut self.vertex_buffer);
             mew::destroy_buffer(device, &mut allocator, &mut self.index_buffer);
             mew::destroy_buffer(device, &mut allocator, &mut self.object_buffer);
@@ -308,10 +383,12 @@ impl Drop for Renderer {
             mew::destroy_buffer(device, &mut allocator, &mut self.material_buffer);
             mew::destroy_buffer(device, &mut allocator, &mut self.draw_indirect_buffer);
             mew::destroy_buffer(device, &mut allocator, &mut self.dispatch_buffer);
+            mew::destroy_buffer(device, &mut allocator, &mut self.spd_buffer);
 
             device.destroy_pipeline(self.copy_pipeline, None);
             device.destroy_pipeline(self.draw_pipeline, None);
             device.destroy_pipeline(self.cull_pipeline, None);
+            device.destroy_pipeline(self.spd_pipeline, None);
         }
     }
 }
@@ -370,7 +447,7 @@ impl ApplicationHandler for App {
             winit::event::WindowEvent::Resized(_) => {
                 if let Some(renderer) = self.renderer.as_mut() {
                     recreate_swapchain(&mut renderer.backend, &renderer.window);
-                    recreate_resources_on_swapchain_resize(renderer);
+                    on_swapchain_resize(renderer);
 
                     let window_size = renderer.window.inner_size();
                     println!(
@@ -385,7 +462,7 @@ impl ApplicationHandler for App {
 
                     if renderer.backend.swapchain.dirty {
                         recreate_swapchain(&mut renderer.backend, &renderer.window);
-                        recreate_resources_on_swapchain_resize(renderer);
+                        on_swapchain_resize(renderer);
 
                         let window_size = renderer.window.inner_size();
                         println!(
@@ -674,6 +751,17 @@ fn render_loop(renderer: &mut Renderer) {
         // device.cmd_end_query(cmd, frame_resource.pipeline_query, 0);
     }
 
+    // {
+    //     renderer.spd.constants = basic_renderer::SpdConstants {
+    //         spd_buffer: renderer.spd_buffer.address,
+    //         rcp_resolution: (),
+    //         mips: (),
+    //         num_wgs: (),
+    //         src_id: (),
+    //         dst_id: (),
+    //     }
+    // }
+
     // Pass 3 - Copy to swapchain
     {
         renderer.copy.constants = basic_renderer::CopyConstants {
@@ -783,7 +871,7 @@ fn render_loop(renderer: &mut Renderer) {
 }
 
 // This is project specific
-fn recreate_resources_on_swapchain_resize(renderer: &mut Renderer) {
+fn on_swapchain_resize(renderer: &mut Renderer) {
     let device = &renderer.backend.device;
 
     let mut allocator = renderer.backend.allocator.lock().unwrap();
@@ -795,6 +883,7 @@ fn recreate_resources_on_swapchain_resize(renderer: &mut Renderer) {
         &mut allocator,
         &mut renderer.framebuffer.depth_image,
     );
+    mew::destroy_image(device, &mut allocator, &mut renderer.framebuffer.depth_pyramid);
 
     // Recreate resources
     renderer.framebuffer.draw_image = mew::create_image(
@@ -818,6 +907,45 @@ fn recreate_resources_on_swapchain_resize(renderer: &mut Renderer) {
         vk::ImageAspectFlags::DEPTH,
         None,
     );
+
+    let hiz_width = mew::nearest_power_of_two(renderer.backend.swapchain.extent.width);
+    let hiz_height = mew::nearest_power_of_two(renderer.backend.swapchain.extent.height);
+    let hiz_mips = hiz_width.max(hiz_height).ilog2() + 1;
+    renderer.framebuffer.depth_pyramid = mew::create_image(
+        device,
+        &mut allocator,
+        vk::Extent2D {
+            width: hiz_width,
+            height: hiz_height,
+        },
+        vk::Format::R32_SFLOAT,
+        vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED,
+        vk::ImageAspectFlags::COLOR,
+        Some(hiz_mips as _),
+    );
+    let max_mip_level = hiz_mips - 1;
+    renderer.framebuffer.depth_pyramid_views = std::array::from_fn(|i| {
+        let view = &mut renderer.framebuffer.depth_pyramid_views[i];
+        unsafe {
+            device.destroy_image_view(*view, None);
+        }
+
+        mew::create_image_view(
+            device,
+            renderer.framebuffer.depth_pyramid.image,
+            renderer.framebuffer.depth_pyramid.format,
+            vk::ImageViewType::TYPE_2D,
+            vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                base_mip_level: i.max(max_mip_level as _) as _,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1,
+            },
+        )
+    });
+    // TODO:
+    // register 11 views with descriptor, skipping writes if no view
 
     // Update descriptors
     renderer.backend.update_image_descriptor(

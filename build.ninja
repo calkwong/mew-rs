@@ -6,3 +6,4 @@ rule slang
 build shaders/compiled/copy_swapchain.spv: slang shaders/copy_swapchain.slang
 build shaders/compiled/mesh.spv: slang shaders/mesh.slang
 build shaders/compiled/culling.spv: slang shaders/culling.slang
+build shaders/compiled/hiz_spd.spv: slang shaders/hiz_spd.slang
