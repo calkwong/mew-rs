@@ -1,6 +1,6 @@
 use ash::vk::{self, Fence};
 use glam::Vec4Swizzles;
-use mew::basic_renderer;
+use mew::{basic_renderer, create_sampler};
 use mew::descriptors::RenderResourceTag;
 use mew::loader::load_gltf;
 use mew::rendergraph::{Pass, Rendergraph};
@@ -40,6 +40,7 @@ struct Renderer {
     cull_pipeline: vk::Pipeline,
 
     framebuffer: Framebuffer,
+    samplers: Vec<vk::Sampler>,
 
     vertex_buffer: mew::Buffer,
     index_buffer: mew::Buffer,
@@ -60,6 +61,11 @@ struct Framebuffer {
 impl Renderer {
     fn new(window: Window) -> Self {
         let backend = mew::Device::new(&window);
+
+        let samplers = vec![
+            create_sampler(&backend.device, vk::Filter::LINEAR, vk::SamplerAddressMode::REPEAT),
+        ];
+        backend.register_samplers(&samplers);
 
         let camera = Camera::default().position(glam::Vec3::new(0.0, 0.0, 5.0));
 
@@ -223,6 +229,7 @@ impl Renderer {
             copy_pipeline,
             draw_pipeline,
             cull_pipeline,
+            samplers,
             framebuffer: Framebuffer {
                 draw_image,
                 depth_image,
@@ -257,6 +264,10 @@ impl Drop for Renderer {
             // Destroy resources
             self.scene_images.iter_mut().for_each(|img|{
                 mew::destroy_image(device, &mut allocator, img);
+            });
+
+            self.samplers.iter().for_each(|samp|{
+                device.destroy_sampler(*samp, None);
             });
 
             mew::destroy_image(device, &mut allocator, &mut self.framebuffer.draw_image);

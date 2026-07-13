@@ -556,7 +556,34 @@ impl Device {
         }
     }
 
-    // TODO: register buffer and samplers
+    // TODO: register buffer
+
+    pub fn register_samplers(&self, samplers: &[vk::Sampler]) {
+        let descriptor = &self.descriptor;
+
+        let infos: Vec<[vk::DescriptorImageInfo; 1]> = samplers.iter().map(|sampler|{
+            [vk::DescriptorImageInfo::default().sampler(*sampler)]
+        }).collect();
+
+
+        let index = get_descriptor_index(RenderResourceTag::Sampler);
+
+        let set = descriptor.sets[index];
+
+        let writes: Vec<vk::WriteDescriptorSet> = infos.iter().enumerate().map(|(i, info)|{
+            vk::WriteDescriptorSet::default()
+                .dst_set(set)
+                .dst_binding(0)
+                .descriptor_type(vk::DescriptorType::SAMPLER)
+                .dst_array_element(i as _)
+                .image_info(info)
+                .descriptor_count(1)
+        }).collect();
+
+        unsafe {
+            self.device.update_descriptor_sets(&writes, &[]);
+        }
+    }
 
     pub fn register_image(&self, view: vk::ImageView, tag: RenderResourceTag) -> u32 {
         let descriptor = &self.descriptor;
@@ -923,7 +950,7 @@ pub fn create_sampled_image(
     aspect: vk::ImageAspectFlags,
     offsets: &[usize],
     data: &[u8],
-    mip: Option<usize>
+    mip: Option<usize>,
 ) -> Image {
     let size = data.len() as u64;
 
@@ -1144,4 +1171,20 @@ pub fn as_bytes<T>(t: &[T]) -> &[u8] {
 // TODO: bytemuck?
 pub fn push_constants_as_bytes<T>(t: &T) -> &[u8] {
     unsafe { std::slice::from_raw_parts((t as *const T) as *const u8, std::mem::size_of::<T>()) }
+}
+
+pub fn create_sampler(
+    device: &ash::Device,
+    filter: vk::Filter,
+    address: vk::SamplerAddressMode,
+) -> vk::Sampler {
+    let info = vk::SamplerCreateInfo::default()
+        .address_mode_u(address)
+        .address_mode_v(address)
+        .address_mode_w(address)
+        .min_filter(filter)
+        .mag_filter(filter)
+        .max_lod(vk::LOD_CLAMP_NONE);
+
+    unsafe { device.create_sampler(&info, None).unwrap() }
 }
