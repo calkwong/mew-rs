@@ -4,7 +4,8 @@ public struct ObjectData
 {
     public float4x4 world_transform;
     public uint mesh_id;
-    uint padding[3];
+    public uint material_id;
+    uint padding[2];
 }
 
 public struct Mesh
@@ -19,9 +20,9 @@ public struct Mesh
 public struct Vertex
 {
     public float3 pos;
-    float padding;
+    public float uv_x;
     public float3 normal;
-    float padding2;
+    public float uv_y;
 }
 
 public struct DrawIndirect
@@ -38,4 +39,9 @@ public struct Dispatch
     public uint x;
     public uint y;
     public uint z;
+}
+
+public struct MaterialData {
+    public float4 base_color_factor;
+    public uint diffuse_id;
 }

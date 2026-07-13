@@ -1,12 +1,14 @@
 use ash::vk::{self, Fence};
 use glam::Vec4Swizzles;
-use mew::basic_renderer;
+use mew::{basic_renderer, create_sampler};
 use mew::descriptors::RenderResourceTag;
+use mew::loader::load_gltf;
 use mew::rendergraph::{Pass, Rendergraph};
 use mew::swapchain::recreate_swapchain;
 use mew::{
     camera::{Camera, Key, KeyState},
     giga_barrier,
+    Image
 };
 use std::time::Instant;
 use winit::{
@@ -27,6 +29,8 @@ struct Renderer {
     last_frame_time: Option<Instant>,
     frame_index: usize,
 
+    scene_images: Vec<Image>,
+
     cull: basic_renderer::CullRenderer,
     mesh: basic_renderer::MeshRenderer,
     copy: basic_renderer::CopyRenderer,
@@ -36,11 +40,13 @@ struct Renderer {
     cull_pipeline: vk::Pipeline,
 
     framebuffer: Framebuffer,
+    samplers: Vec<vk::Sampler>,
 
     vertex_buffer: mew::Buffer,
     index_buffer: mew::Buffer,
     mesh_buffer: mew::Buffer,
     object_buffer: mew::Buffer,
+    material_buffer: mew::Buffer,
     draw_indirect_buffer: mew::Buffer,
     dispatch_buffer: mew::Buffer,
 }
@@ -56,6 +62,11 @@ impl Renderer {
     fn new(window: Window) -> Self {
         let backend = mew::Device::new(&window);
 
+        let samplers = vec![
+            create_sampler(&backend.device, vk::Filter::LINEAR, vk::SamplerAddressMode::REPEAT),
+        ];
+        backend.register_samplers(&samplers);
+
         let camera = Camera::default().position(glam::Vec3::new(0.0, 0.0, 5.0));
 
         let device = &backend.device;
@@ -70,7 +81,7 @@ impl Renderer {
             vk::Format::R16G16B16A16_SFLOAT,
             vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_SRC,
             vk::ImageAspectFlags::COLOR,
-            false,
+            None,
         );
 
         let depth_image = mew::create_image(
@@ -80,7 +91,7 @@ impl Renderer {
             vk::Format::D32_SFLOAT,
             vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
             vk::ImageAspectFlags::DEPTH,
-            false,
+            None,
         );
 
         let draw_index = backend.register_image(draw_image.view, RenderResourceTag::Storage);
@@ -115,7 +126,7 @@ impl Renderer {
         }
 
         let gltf_path = std::env::args().nth(1).unwrap();
-        let scene = mew::loader::load_gltf(&gltf_path);
+        let scene = load_gltf(&gltf_path, &backend, allocator);
 
         let vertices = mew::as_bytes(&scene.vertices);
         let vertex_buffer = mew::create_buffer_with_data(
@@ -177,6 +188,7 @@ impl Renderer {
                             world_transform: glam::Mat4::from_translation(glam::Vec3::new(x, y, z))
                                 * obj.world_transform,
                             mesh_id: obj.mesh_id,
+                            material_id: obj.material_id,
                         });
                     }
                 }
@@ -194,8 +206,21 @@ impl Renderer {
             vk::BufferUsageFlags::STORAGE_BUFFER
                 | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
                 | vk::BufferUsageFlags::TRANSFER_DST,
-            // objects,
-            instances,
+            objects,
+            // instances,
+        );
+
+        let materials = mew::as_bytes(&scene.materials);
+        let material_buffer = mew::create_buffer_with_data(
+            device,
+            backend.graphics_queue,
+            backend.frame_resources[0].command_pool,
+            backend.frame_resources[0].command_buffer,
+            allocator,
+            vk::BufferUsageFlags::STORAGE_BUFFER
+                | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
+                | vk::BufferUsageFlags::TRANSFER_DST,
+            materials,
         );
 
         let draw_indirect_buffer = mew::create_buffer(
@@ -226,12 +251,14 @@ impl Renderer {
             camera,
             last_frame_time: None,
             frame_index: 0,
+            scene_images: scene.images,
             cull: basic_renderer::CullRenderer::new(),
             mesh: basic_renderer::MeshRenderer::new(),
             copy: basic_renderer::CopyRenderer::new(),
             copy_pipeline,
             draw_pipeline,
             cull_pipeline,
+            samplers,
             framebuffer: Framebuffer {
                 draw_image,
                 depth_image,
@@ -242,6 +269,7 @@ impl Renderer {
             index_buffer,
             mesh_buffer,
             object_buffer,
+            material_buffer,
             draw_indirect_buffer,
             dispatch_buffer,
         }
@@ -263,12 +291,21 @@ impl Drop for Renderer {
             let mut allocator = self.backend.allocator.lock().unwrap();
 
             // Destroy resources
+            self.scene_images.iter_mut().for_each(|img|{
+                mew::destroy_image(device, &mut allocator, img);
+            });
+
+            self.samplers.iter().for_each(|samp|{
+                device.destroy_sampler(*samp, None);
+            });
+
             mew::destroy_image(device, &mut allocator, &mut self.framebuffer.draw_image);
             mew::destroy_image(device, &mut allocator, &mut self.framebuffer.depth_image);
             mew::destroy_buffer(device, &mut allocator, &mut self.vertex_buffer);
             mew::destroy_buffer(device, &mut allocator, &mut self.index_buffer);
             mew::destroy_buffer(device, &mut allocator, &mut self.object_buffer);
             mew::destroy_buffer(device, &mut allocator, &mut self.mesh_buffer);
+            mew::destroy_buffer(device, &mut allocator, &mut self.material_buffer);
             mew::destroy_buffer(device, &mut allocator, &mut self.draw_indirect_buffer);
             mew::destroy_buffer(device, &mut allocator, &mut self.dispatch_buffer);
 
@@ -596,6 +633,7 @@ fn render_loop(renderer: &mut Renderer) {
             vertex_buffer: renderer.vertex_buffer.address,
             mesh_buffer: renderer.mesh_buffer.address,
             object_buffer: renderer.object_buffer.address,
+            material_buffer: renderer.material_buffer.address,
         };
 
         // device.cmd_begin_query(
@@ -768,7 +806,7 @@ fn recreate_resources_on_swapchain_resize(renderer: &mut Renderer) {
             | vk::ImageUsageFlags::TRANSFER_SRC
             | vk::ImageUsageFlags::COLOR_ATTACHMENT,
         vk::ImageAspectFlags::COLOR,
-        false,
+        None,
     );
 
     renderer.framebuffer.depth_image = mew::create_image(
@@ -778,7 +816,7 @@ fn recreate_resources_on_swapchain_resize(renderer: &mut Renderer) {
         vk::Format::D32_SFLOAT,
         vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
         vk::ImageAspectFlags::DEPTH,
-        false,
+        None,
     );
 
     // Update descriptors
@@ -801,6 +839,7 @@ fn recreate_resources_on_swapchain_resize(renderer: &mut Renderer) {
 }
 
 fn main() {
+    // TODO: can we set this at runtime
     // unsafe {
     //     std::env::remove_var("WAYLAND_DISPLAY");
     // }

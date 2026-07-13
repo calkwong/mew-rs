@@ -9,6 +9,16 @@ struct PushConstants
 [[vk::push_constant]]
 PushConstants pc;
 
+float3 linear_to_srgb(float3 c)
+{
+	return pow(c, float3(1.0 / 2.2));
+}
+
+float3 reinhard(float3 c)
+{
+	return c / (float3(1.0) + c);
+}
+
 [shader("compute")]
 [numthreads(8, 8, 1)]
 void main(uint3 t_id: SV_DispatchThreadID)
@@ -23,5 +33,7 @@ void main(uint3 t_id: SV_DispatchThreadID)
 
     float4 color = src_image.Load(t_id.xy);
 
-    dst_image.Store(t_id.xy, color);
+    color.xyz = linear_to_srgb(reinhard(color.xyz));
+
+    dst_image.Store(t_id.xy, float4(color.xyz, 1.0));
 }

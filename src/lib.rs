@@ -556,7 +556,34 @@ impl Device {
         }
     }
 
-    // TODO: register buffer and samplers
+    // TODO: register buffer
+
+    pub fn register_samplers(&self, samplers: &[vk::Sampler]) {
+        let descriptor = &self.descriptor;
+
+        let infos: Vec<[vk::DescriptorImageInfo; 1]> = samplers.iter().map(|sampler|{
+            [vk::DescriptorImageInfo::default().sampler(*sampler)]
+        }).collect();
+
+
+        let index = get_descriptor_index(RenderResourceTag::Sampler);
+
+        let set = descriptor.sets[index];
+
+        let writes: Vec<vk::WriteDescriptorSet> = infos.iter().enumerate().map(|(i, info)|{
+            vk::WriteDescriptorSet::default()
+                .dst_set(set)
+                .dst_binding(0)
+                .descriptor_type(vk::DescriptorType::SAMPLER)
+                .dst_array_element(i as _)
+                .image_info(info)
+                .descriptor_count(1)
+        }).collect();
+
+        unsafe {
+            self.device.update_descriptor_sets(&writes, &[]);
+        }
+    }
 
     pub fn register_image(&self, view: vk::ImageView, tag: RenderResourceTag) -> u32 {
         let descriptor = &self.descriptor;
@@ -910,9 +937,8 @@ pub fn create_buffer_with_data(
     buffer
 }
 
-
 #[allow(clippy::too_many_arguments)]
-pub fn create_image_with_data(
+pub fn create_sampled_image(
     device: &ash::Device,
     queue: Queue,
     pool: vk::CommandPool,
@@ -922,8 +948,9 @@ pub fn create_image_with_data(
     format: vk::Format,
     usage: vk::ImageUsageFlags,
     aspect: vk::ImageAspectFlags,
-    _mip: bool,
+    offsets: &[usize],
     data: &[u8],
+    mip: Option<usize>,
 ) -> Image {
     let size = data.len() as u64;
 
@@ -937,7 +964,7 @@ pub fn create_image_with_data(
     let ptr = staging_buffer.allocation.mapped_ptr().unwrap().as_ptr() as *mut u8;
     unsafe { ptr.copy_from(data.as_ptr(), data.len()) };
 
-    let image = create_image(device, allocator, extent, format, usage, aspect, _mip);
+    let image = create_image(device, allocator, extent, format, usage, aspect, mip);
 
     unsafe {
         device
@@ -953,19 +980,24 @@ pub fn create_image_with_data(
 
     image_giga_barrier(device, cmd, image.image);
 
-    let image_subresource = vk::ImageSubresourceLayers::default()
-        .aspect_mask(vk::ImageAspectFlags::COLOR)
-        .base_array_layer(0)
-        .layer_count(1)
-        .mip_level(0);
+    let buffer_image_copy: Vec<vk::BufferImageCopy2> = (0..offsets.len())
+        .map(|i| {
+            let image_subresource = vk::ImageSubresourceLayers::default()
+                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .base_array_layer(0)
+                .layer_count(1)
+                .mip_level(i as _);
 
-    let buffer_image_copy = [vk::BufferImageCopy2::default()
-        .image_subresource(image_subresource)
-        .image_extent(vk::Extent3D {
-            width: extent.width,
-            height: extent.height,
-            depth: 1,
-        })];
+            vk::BufferImageCopy2::default()
+                .image_subresource(image_subresource)
+                .image_extent(vk::Extent3D {
+                    width: (extent.width >> i).max(1),
+                    height: (extent.height >> i).max(1),
+                    depth: 1,
+                })
+                .buffer_offset(offsets[i] as _)
+        })
+        .collect();
 
     let copy_buffer_to_image_info = vk::CopyBufferToImageInfo2::default()
         .src_buffer(staging_buffer.buffer)
@@ -1011,7 +1043,7 @@ pub fn create_image(
     format: vk::Format,
     usage: vk::ImageUsageFlags,
     aspect: vk::ImageAspectFlags,
-    _mip: bool,
+    mip: Option<usize>,
 ) -> Image {
     let image_create_info = vk::ImageCreateInfo::default()
         .image_type(vk::ImageType::TYPE_2D)
@@ -1021,7 +1053,7 @@ pub fn create_image(
             height: extent.height,
             depth: 1,
         })
-        .mip_levels(1)
+        .mip_levels(mip.unwrap_or(1) as _)
         .array_layers(1)
         .usage(usage)
         .samples(vk::SampleCountFlags::TYPE_1);
@@ -1139,4 +1171,20 @@ pub fn as_bytes<T>(t: &[T]) -> &[u8] {
 // TODO: bytemuck?
 pub fn push_constants_as_bytes<T>(t: &T) -> &[u8] {
     unsafe { std::slice::from_raw_parts((t as *const T) as *const u8, std::mem::size_of::<T>()) }
+}
+
+pub fn create_sampler(
+    device: &ash::Device,
+    filter: vk::Filter,
+    address: vk::SamplerAddressMode,
+) -> vk::Sampler {
+    let info = vk::SamplerCreateInfo::default()
+        .address_mode_u(address)
+        .address_mode_v(address)
+        .address_mode_w(address)
+        .min_filter(filter)
+        .mag_filter(filter)
+        .max_lod(vk::LOD_CLAMP_NONE);
+
+    unsafe { device.create_sampler(&info, None).unwrap() }
 }

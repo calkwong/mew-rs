@@ -63,6 +63,7 @@ pub struct MeshConstants {
     pub vertex_buffer: vk::DeviceAddress,
     pub mesh_buffer: vk::DeviceAddress,
     pub object_buffer: vk::DeviceAddress,
+    pub material_buffer: vk::DeviceAddress,
 }
 
 pub struct CopyRenderer {
