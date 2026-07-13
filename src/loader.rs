@@ -1,5 +1,6 @@
 use crate as mew;
 use ash::vk::{self, Queue};
+use glam::Vec4;
 use glam::{Mat4, Vec3};
 use gpu_allocator::vulkan::Allocator;
 use mew::Image;
@@ -11,6 +12,7 @@ pub struct Scene {
     pub meshes: Vec<Mesh>,
     pub renderables: Vec<ObjectData>,
     pub images: Vec<Image>,
+    pub materials: Vec<MaterialData>,
     // For pure static scene, technically we don't need these
     pub nodes: Vec<Node>,
     pub node_transforms: Vec<NodeTransform>,
@@ -20,6 +22,13 @@ pub struct Scene {
 pub struct ObjectData {
     world_transform: Mat4,
     mesh_id: u32,
+    material_id: u32,
+}
+
+#[allow(dead_code)]
+pub struct MaterialData {
+    base_color_factor: Vec4,
+    diffuse_id: u32,
 }
 
 pub struct Node {
@@ -198,6 +207,27 @@ pub fn load_gltf(
     let mut positions: Vec<Vec3> = Vec::new();
     let mut normals: Vec<Vec3> = Vec::new();
 
+    let mut materials: Vec<MaterialData> = Vec::new();
+    for m in &gltf.materials {
+        let diffuse_id = if let Some(tex) = &m.pbr_metallic_roughness.base_color_texture {
+            let texture_index = tex.index;
+            if let Some(basisu_tex) = gltf.textures[texture_index].extensions.khr_texture_basisu {
+                basisu_tex.source as u32
+            } else {
+                todo!("Implement non-basisu textures")
+            }
+        } else {
+            0
+        };
+
+        let mat = MaterialData {
+            base_color_factor: Vec4::from_array(m.pbr_metallic_roughness.base_color_factor),
+            diffuse_id,
+        };
+        materials.push(mat);
+    }
+
+    let mut material_ids: Vec<u32> = Vec::new();
     for m in &gltf.meshes {
         let mesh: MeshAsset = MeshAsset {
             mesh_id: meshes.len() as u32,
@@ -229,6 +259,12 @@ pub fn load_gltf(
             get_normals(&gltf, buffer_data, &mut normals, normal_idx);
 
             assert_eq!(positions.len(), normals.len());
+
+            if let Some(mat) = primitive.material {
+                material_ids.push(mat as _);
+            } else {
+                panic!("No material unsupported");
+            }
 
             // For global combined index buffer
             meshes.push(Mesh {
@@ -391,6 +427,7 @@ pub fn load_gltf(
                 renderables.push(ObjectData {
                     world_transform: node_transforms[index].world_transform,
                     mesh_id: mesh.mesh_id + i,
+                    material_id: material_ids[(mesh.mesh_id + i) as usize],
                 })
             });
         }
@@ -402,6 +439,7 @@ pub fn load_gltf(
         meshes,
         renderables,
         images,
+        materials,
         nodes,
         node_transforms,
     }

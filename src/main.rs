@@ -45,6 +45,7 @@ struct Renderer {
     index_buffer: mew::Buffer,
     mesh_buffer: mew::Buffer,
     object_buffer: mew::Buffer,
+    material_buffer: mew::Buffer,
     draw_indirect_buffer: mew::Buffer,
     dispatch_buffer: mew::Buffer,
 }
@@ -174,6 +175,19 @@ impl Renderer {
             objects,
         );
 
+        let materials = mew::as_bytes(&scene.materials);
+        let material_buffer = mew::create_buffer_with_data(
+            device,
+            backend.graphics_queue,
+            backend.frame_resources[0].command_pool,
+            backend.frame_resources[0].command_buffer,
+            allocator,
+            vk::BufferUsageFlags::STORAGE_BUFFER
+                | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
+                | vk::BufferUsageFlags::TRANSFER_DST,
+            materials,
+        );
+
         let draw_indirect_buffer = mew::create_buffer(
             device,
             allocator,
@@ -219,6 +233,7 @@ impl Renderer {
             index_buffer,
             mesh_buffer,
             object_buffer,
+            material_buffer,
             draw_indirect_buffer,
             dispatch_buffer,
         }
@@ -250,6 +265,7 @@ impl Drop for Renderer {
             mew::destroy_buffer(device, &mut allocator, &mut self.index_buffer);
             mew::destroy_buffer(device, &mut allocator, &mut self.object_buffer);
             mew::destroy_buffer(device, &mut allocator, &mut self.mesh_buffer);
+            mew::destroy_buffer(device, &mut allocator, &mut self.material_buffer);
             mew::destroy_buffer(device, &mut allocator, &mut self.draw_indirect_buffer);
             mew::destroy_buffer(device, &mut allocator, &mut self.dispatch_buffer);
 
@@ -577,6 +593,7 @@ fn render_loop(renderer: &mut Renderer) {
             vertex_buffer: renderer.vertex_buffer.address,
             mesh_buffer: renderer.mesh_buffer.address,
             object_buffer: renderer.object_buffer.address,
+            material_buffer: renderer.material_buffer.address,
         };
 
         // device.cmd_begin_query(
