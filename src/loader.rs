@@ -1,6 +1,5 @@
 use crate as mew;
 use ash::vk;
-use glam::Vec4;
 use glam::{Mat4, Vec2, Vec3};
 use mew::Image;
 use mew::create_sampled_image;
@@ -24,9 +23,9 @@ pub struct ObjectData {
     material_id: u32,
 }
 
-#[allow(dead_code)]
+#[repr(C)]
 pub struct MaterialData {
-    base_color_factor: Vec4,
+    base_color_factor: [f32; 4],
     diffuse_id: u32,
 }
 
@@ -311,7 +310,7 @@ pub fn load_gltf(
         };
 
         let mat = MaterialData {
-            base_color_factor: Vec4::from_array(m.pbr_metallic_roughness.base_color_factor),
+            base_color_factor: m.pbr_metallic_roughness.base_color_factor,
             diffuse_id,
         };
         materials.push(mat);
