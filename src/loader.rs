@@ -1,10 +1,16 @@
+use crate as mew;
+use ash::vk::{self, Queue};
 use glam::{Mat4, Vec3};
+use gpu_allocator::vulkan::Allocator;
+use mew::Image;
+use mew::create_sampled_image;
 
 pub struct Scene {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
     pub meshes: Vec<Mesh>,
     pub renderables: Vec<ObjectData>,
+    pub images: Vec<Image>,
     // For pure static scene, technically we don't need these
     pub nodes: Vec<Node>,
     pub node_transforms: Vec<NodeTransform>,
@@ -158,7 +164,14 @@ fn get_normals(
     }))
 }
 
-pub fn load_gltf(path: &str) -> Scene {
+pub fn load_gltf(
+    path: &str,
+    device: &ash::Device,
+    queue: Queue,
+    pool: vk::CommandPool,
+    cmd: vk::CommandBuffer,
+    allocator: &mut Allocator,
+) -> Scene {
     let bytes = std::fs::read(path).unwrap();
     let (gltf, buffer): (
         goth_gltf::Gltf<goth_gltf::default_extensions::Extensions>,
@@ -185,7 +198,6 @@ pub fn load_gltf(path: &str) -> Scene {
     let mut positions: Vec<Vec3> = Vec::new();
     let mut normals: Vec<Vec3> = Vec::new();
 
-    // We need a threadsafe container for parallel loading?
     for m in &gltf.meshes {
         let mesh: MeshAsset = MeshAsset {
             mesh_id: meshes.len() as u32,
@@ -231,6 +243,93 @@ pub fn load_gltf(path: &str) -> Scene {
         mesh_assets.push(mesh);
     }
 
+    // Read file -> decompress data -> transcode -> upload to GPU
+    let images: Vec<Image> = gltf
+        .images
+        .iter()
+        .map(|img| {
+            let mut file = std::fs::File::open(
+                path.with_file_name(img.uri.as_ref().unwrap())
+                    .to_str()
+                    .unwrap(),
+            )
+            .unwrap();
+            let mut buf: Vec<u8> = Vec::new();
+            std::io::Read::read_to_end(&mut file, &mut buf).unwrap();
+            let data: &[u8] = &buf;
+
+            let ktx2 = ktx2::Reader::new(data).expect("Can't create reader");
+            let header = ktx2.header();
+
+            assert_eq!(
+                header.supercompression_scheme.unwrap(),
+                ktx2::SupercompressionScheme::Zstandard
+            );
+            assert_eq!(header.format, None);
+
+            let mut data: Vec<u8> = Vec::with_capacity(
+                ktx2.levels()
+                    .map(|level| level.uncompressed_byte_length)
+                    .sum::<u64>() as _,
+            );
+
+            let mut offsets = Vec::with_capacity(ktx2.levels().len());
+
+            for (i, level) in ktx2.levels().enumerate() {
+                offsets.push(data.len());
+
+                let decompressed_data =
+                    &zstd::bulk::decompress(level.data, level.uncompressed_byte_length as _)
+                        .unwrap();
+
+                let transcoder = basis_universal::LowLevelUastcTranscoder::new();
+                let width = (header.pixel_width >> i).max(1);
+                let height = (header.pixel_height >> i).max(1);
+
+                let output = transcoder
+                    .transcode_slice(
+                        decompressed_data,
+                        basis_universal::SliceParametersUastc {
+                            num_blocks_x: width.div_ceil(4),
+                            num_blocks_y: height.div_ceil(4),
+                            has_alpha: true,
+                            original_width: width,
+                            original_height: height,
+                        },
+                        basis_universal::DecodeFlags::HIGH_QUALITY,
+                        basis_universal::TranscoderBlockFormat::BC7,
+                    )
+                    .unwrap();
+
+                data.extend_from_slice(&output);
+            }
+
+            let format = match ktx2.transfer_function().unwrap() {
+                ktx2::TransferFunction::Linear => vk::Format::BC7_SRGB_BLOCK,
+                ktx2::TransferFunction::SRGB => vk::Format::BC7_UNORM_BLOCK,
+                _ => panic!("Not currently supported"),
+            };
+
+            create_sampled_image(
+                device,
+                queue,
+                pool,
+                cmd,
+                allocator,
+                vk::Extent2D {
+                    width: header.pixel_width,
+                    height: header.pixel_height,
+                },
+                format,
+                vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+                vk::ImageAspectFlags::COLOR,
+                &offsets,
+                &data,
+                Some(ktx2.levels().len()),
+            )
+        })
+        .collect();
+
     // May need to move into loop above
     let iter = std::iter::zip(positions, normals);
     let vertices: Vec<Vertex> = iter
@@ -247,18 +346,14 @@ pub fn load_gltf(path: &str) -> Scene {
     let mut node_transforms: Vec<NodeTransform> = Vec::new();
     for gltf_node in &gltf.nodes {
         let new_node = match gltf_node.mesh {
-            Some(index) => {
-                Node {
-                    mesh: Some(mesh_assets[index]),
-                    children: gltf_node.children.clone(),
-                }
-            }
-            None => {
-                Node {
-                    mesh: None,
-                    children: gltf_node.children.clone(),
-                }
-            }
+            Some(index) => Node {
+                mesh: Some(mesh_assets[index]),
+                children: gltf_node.children.clone(),
+            },
+            None => Node {
+                mesh: None,
+                children: gltf_node.children.clone(),
+            },
         };
         nodes.push(new_node);
 
@@ -306,6 +401,7 @@ pub fn load_gltf(path: &str) -> Scene {
         indices,
         meshes,
         renderables,
+        images,
         nodes,
         node_transforms,
     }

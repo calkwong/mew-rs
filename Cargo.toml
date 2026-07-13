@@ -10,3 +10,6 @@ ash = { version = "0.38.0", default-features = false, features = ["linked", "std
 gpu-allocator = { version = "0.28.0", default-features = false, features = ["std", "vulkan"] }
 goth-gltf = "0.3.0"
 glam = "0.33.2"
+ktx2 = "0.5.0"
+zstd = "0.13.3"
+basis-universal = "0.3.1"
