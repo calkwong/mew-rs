@@ -94,7 +94,8 @@ fn get_indices(
     count as u32
 }
 
-fn get_positions(
+// Used for extracting positions, normals and tangents
+fn get_float3(
     gltf: &goth_gltf::Gltf<goth_gltf::default_extensions::Extensions>,
     buffer_data: &[u8],
     accessor_index: usize,
@@ -131,45 +132,6 @@ fn get_positions(
             Vec3 { x, y, z }
         })
         .collect()
-}
-
-// TODO: turn into get_Vec3 instead?
-fn get_normals(
-    gltf: &goth_gltf::Gltf<goth_gltf::default_extensions::Extensions>,
-    buffer_data: &[u8],
-    out_buffer: &mut Vec<Vec3>,
-    accessor_index: usize,
-) {
-    let accessor = &gltf.accessors[accessor_index];
-    let buffer_view = &gltf.buffer_views[accessor.buffer_view.unwrap()];
-
-    let accessor_byte_offset = &accessor.byte_offset;
-    let buffer_view_byte_offset = buffer_view.byte_offset;
-
-    let start = accessor_byte_offset + buffer_view_byte_offset;
-    let count = accessor.count;
-
-    let byte_size = accessor.component_type.byte_size();
-    assert_eq!(byte_size, 4);
-    let byte_stride = buffer_view.byte_stride.unwrap_or(byte_size * 3);
-
-    out_buffer.extend((0..count).map(|i| {
-        let vertex_offset = start + i * byte_stride;
-
-        let get = |k: usize| {
-            f32::from_le_bytes(
-                buffer_data[vertex_offset + byte_size * k..vertex_offset + byte_size * (k + 1)]
-                    .try_into()
-                    .unwrap(),
-            )
-        };
-
-        let x = get(0);
-        let y = get(1);
-        let z = get(2);
-
-        Vec3 { x, y, z }
-    }))
 }
 
 fn get_uv(
@@ -329,6 +291,7 @@ pub fn load_gltf(
         })
         .collect();
 
+    // This is necessary if we load multiple gltf
     let descriptor_handles: Vec<u32> = images
         .iter()
         .map(|img| device.register_image(img.view, mew::RenderResourceTag::Sampled))
@@ -368,7 +331,7 @@ pub fn load_gltf(
             let index_count = get_indices(&gltf, buffer_data, &mut indices, indices_idx);
 
             let positions_idx = primitive.attributes.position.unwrap();
-            let new_positions = get_positions(&gltf, buffer_data, positions_idx);
+            let new_positions = get_float3(&gltf, buffer_data, positions_idx);
 
             let mut center = Vec3::default();
             new_positions.iter().for_each(|p| {
@@ -382,9 +345,8 @@ pub fn load_gltf(
 
             positions.extend(new_positions);
 
-            // TODO: don't modify in fn
             let normal_idx = primitive.attributes.normal.unwrap();
-            get_normals(&gltf, buffer_data, &mut normals, normal_idx);
+            normals.extend(get_float3(&gltf, buffer_data, normal_idx));
 
             if let Some(uv_idx) = primitive.attributes.texcoord_0 {
                 uvs.extend(get_uv(&gltf, buffer_data, uv_idx));
