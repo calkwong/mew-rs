@@ -1,8 +1,7 @@
 use crate as mew;
-use ash::vk::{self, Queue};
+use ash::vk;
 use glam::Vec4;
-use glam::{Mat4, Vec3, Vec2};
-use gpu_allocator::vulkan::Allocator;
+use glam::{Mat4, Vec2, Vec3};
 use mew::Image;
 use mew::create_sampled_image;
 
@@ -213,11 +212,8 @@ fn get_uv(
 
 pub fn load_gltf(
     path: &str,
-    device: &ash::Device,
-    queue: Queue,
-    pool: vk::CommandPool,
-    cmd: vk::CommandBuffer,
-    allocator: &mut Allocator,
+    device: &mew::Device,
+    allocator: &mut gpu_allocator::vulkan::Allocator,
 ) -> Scene {
     let bytes = std::fs::read(path).unwrap();
     let (gltf, buffer): (
@@ -245,96 +241,6 @@ pub fn load_gltf(
     let mut positions: Vec<Vec3> = Vec::new();
     let mut normals: Vec<Vec3> = Vec::new();
     let mut uvs: Vec<Vec2> = Vec::new();
-
-    let mut materials: Vec<MaterialData> = Vec::new();
-    for m in &gltf.materials {
-        let diffuse_id = if let Some(tex) = &m.pbr_metallic_roughness.base_color_texture {
-            let texture_index = tex.index;
-            if let Some(basisu_tex) = gltf.textures[texture_index].extensions.khr_texture_basisu {
-                basisu_tex.source as u32
-            } else {
-                todo!("Implement non-basisu textures")
-            }
-        } else {
-            0
-        };
-
-        let mat = MaterialData {
-            base_color_factor: Vec4::from_array(m.pbr_metallic_roughness.base_color_factor),
-            diffuse_id,
-        };
-        materials.push(mat);
-    }
-
-    let mut material_ids: Vec<u32> = Vec::new();
-    for m in &gltf.meshes {
-        let mesh: MeshAsset = MeshAsset {
-            mesh_id: meshes.len() as u32,
-            count: m.primitives.len() as u32,
-        };
-
-        for primitive in &m.primitives {
-            let indices_idx = primitive.indices.unwrap();
-            let vertex_offset = positions.len() as u32;
-            let first_index = indices.len() as u32;
-            let index_count = get_indices(&gltf, buffer_data, &mut indices, indices_idx);
-
-            let positions_idx = primitive.attributes.position.unwrap();
-            let new_positions = get_positions(&gltf, buffer_data, positions_idx);
-
-            let mut center = Vec3::default();
-            new_positions.iter().for_each(|p| {
-                center += p;
-            });
-            center /= new_positions.len() as f32;
-            let mut radius: f32 = 0.0;
-            new_positions.iter().for_each(|p| {
-                radius = p.distance(center).max(radius);
-            });
-
-            positions.extend(new_positions);
-
-            // TODO: don't modify in fn
-            let normal_idx = primitive.attributes.normal.unwrap();
-            get_normals(&gltf, buffer_data, &mut normals, normal_idx);
-
-            let uv_idx = primitive.attributes.texcoord_0.unwrap();
-            uvs.extend(get_uv(&gltf, buffer_data, uv_idx));
-
-            if let Some(mat) = primitive.material {
-                material_ids.push(mat as _);
-            } else {
-                panic!("No material unsupported");
-            }
-
-            // For global combined index buffer
-            meshes.push(Mesh {
-                vertex_offset,
-                first_index,
-                index_count,
-                radius,
-                center,
-            });
-        }
-
-        mesh_assets.push(mesh);
-    }
-
-    assert_eq!(positions.len(), normals.len());
-    assert_eq!(positions.len(), uvs.len());
-    let vertices: Vec<Vertex> = (0..positions.len()).map(|i| {
-        let pos = positions[i];
-        let normal = normals[i];
-        let uv = uvs[i];
-
-        Vertex {
-            pos,
-            uv_x: uv[0],
-            normal,
-            uv_y: uv[1],
-        }
-
-    }).collect();
 
     // Read file -> decompress data -> transcode -> upload to GPU
     let images: Vec<Image> = gltf
@@ -398,16 +304,16 @@ pub fn load_gltf(
             }
 
             let format = match ktx2.transfer_function().unwrap() {
-                ktx2::TransferFunction::Linear => vk::Format::BC7_SRGB_BLOCK,
-                ktx2::TransferFunction::SRGB => vk::Format::BC7_UNORM_BLOCK,
+                ktx2::TransferFunction::Linear => vk::Format::BC7_UNORM_BLOCK,
+                ktx2::TransferFunction::SRGB => vk::Format::BC7_SRGB_BLOCK,
                 _ => panic!("Not currently supported"),
             };
 
             create_sampled_image(
-                device,
-                queue,
-                pool,
-                cmd,
+                &device.device,
+                device.graphics_queue,
+                device.frame_resources[0].command_pool,
+                device.frame_resources[0].command_buffer,
                 allocator,
                 vk::Extent2D {
                     width: header.pixel_width,
@@ -420,6 +326,105 @@ pub fn load_gltf(
                 &data,
                 Some(ktx2.levels().len()),
             )
+        })
+        .collect();
+
+    let descriptor_handles: Vec<u32> = images
+        .iter()
+        .map(|img| device.register_image(img.view, mew::RenderResourceTag::Sampled))
+        .collect();
+
+    let mut materials: Vec<MaterialData> = Vec::new();
+    for m in &gltf.materials {
+        let diffuse_id = if let Some(tex) = &m.pbr_metallic_roughness.base_color_texture {
+            let texture_index = tex.index;
+            if let Some(basisu_tex) = gltf.textures[texture_index].extensions.khr_texture_basisu {
+                descriptor_handles[basisu_tex.source]
+            } else {
+                todo!("Implement non-basisu textures");
+            }
+        } else {
+            0
+        };
+
+        let mat = MaterialData {
+            base_color_factor: Vec4::from_array(m.pbr_metallic_roughness.base_color_factor),
+            diffuse_id,
+        };
+        materials.push(mat);
+    }
+
+    let mut material_ids: Vec<u32> = Vec::new();
+    for m in &gltf.meshes {
+        let mesh: MeshAsset = MeshAsset {
+            mesh_id: meshes.len() as u32,
+            count: m.primitives.len() as u32,
+        };
+
+        for primitive in &m.primitives {
+            let indices_idx = primitive.indices.unwrap();
+            let vertex_offset = positions.len() as u32;
+            let first_index = indices.len() as u32;
+            let index_count = get_indices(&gltf, buffer_data, &mut indices, indices_idx);
+
+            let positions_idx = primitive.attributes.position.unwrap();
+            let new_positions = get_positions(&gltf, buffer_data, positions_idx);
+
+            let mut center = Vec3::default();
+            new_positions.iter().for_each(|p| {
+                center += p;
+            });
+            center /= new_positions.len() as f32;
+            let mut radius: f32 = 0.0;
+            new_positions.iter().for_each(|p| {
+                radius = p.distance(center).max(radius);
+            });
+
+            positions.extend(new_positions);
+
+            // TODO: don't modify in fn
+            let normal_idx = primitive.attributes.normal.unwrap();
+            get_normals(&gltf, buffer_data, &mut normals, normal_idx);
+
+            if let Some(uv_idx) = primitive.attributes.texcoord_0 {
+                uvs.extend(get_uv(&gltf, buffer_data, uv_idx));
+            } else {
+                uvs.resize(positions.len(), Vec2::default());
+            }
+
+            if let Some(mat) = primitive.material {
+                material_ids.push(mat as _);
+            } else {
+                panic!("No material unsupported");
+            }
+
+            // For global combined index buffer
+            meshes.push(Mesh {
+                vertex_offset,
+                first_index,
+                index_count,
+                radius,
+                center,
+            });
+        }
+
+        mesh_assets.push(mesh);
+    }
+
+    assert_eq!(positions.len(), normals.len());
+    assert_eq!(positions.len(), uvs.len());
+    let vertices: Vec<Vertex> = (0..positions.len())
+        .map(|i| {
+            let pos = positions[i];
+            let normal = normals[i];
+            let uv = uvs[i];
+
+            Vertex {
+                pos,
+                uv_x: uv[0],
+                normal,
+                uv_y: uv[1],
+            }
         })
         .collect();
 

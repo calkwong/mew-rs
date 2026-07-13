@@ -44,7 +44,8 @@ impl Descriptor {
             sets,
             layouts,
             storage_image_count: Arc::new(Mutex::new(CountTracker { next: 0 })),
-            sample_image_count: Arc::new(Mutex::new(CountTracker { next: 0 })),
+            // TODO: hack so index = 0 is always invalid
+            sample_image_count: Arc::new(Mutex::new(CountTracker { next: 1 })),
         }
     }
 

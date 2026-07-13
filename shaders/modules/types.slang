@@ -41,7 +41,9 @@ public struct Dispatch
     public uint z;
 }
 
+// TODO: investigate scalar layout issue
 public struct MaterialData {
     public float4 base_color_factor;
     public uint diffuse_id;
+    uint padding[3];
 }

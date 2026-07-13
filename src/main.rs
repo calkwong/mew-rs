@@ -126,7 +126,7 @@ impl Renderer {
         }
 
         let gltf_path = std::env::args().nth(1).unwrap();
-        let scene = load_gltf(&gltf_path, device, backend.graphics_queue, backend.frame_resources[0].command_pool, backend.frame_resources[0].command_buffer, allocator);
+        let scene = load_gltf(&gltf_path, &backend, allocator);
 
         let vertices = mew::as_bytes(&scene.vertices);
         let vertex_buffer = mew::create_buffer_with_data(
@@ -810,9 +810,10 @@ fn recreate_resources_on_swapchain_resize(renderer: &mut Renderer) {
 }
 
 fn main() {
-    unsafe {
-        std::env::remove_var("WAYLAND_DISPLAY");
-    }
+    // TODO: can we set this at runtime
+    // unsafe {
+    //     std::env::remove_var("WAYLAND_DISPLAY");
+    // }
 
     let event_loop = EventLoop::new().unwrap();
 
