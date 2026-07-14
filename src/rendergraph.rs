@@ -17,6 +17,7 @@ pub struct Rendergraph<'a> {
     executes: Vec<Box<dyn Fn(&ash::Device, vk::CommandBuffer, vk::PipelineLayout) + 'a>>,
     images: Vec<vk::Image>,
     depth_image: Option<vk::Image>,
+    names: Vec<&'a str>,
 }
 
 struct ResourceState<'a> {
@@ -41,12 +42,14 @@ impl<'a> Rendergraph<'a> {
             executes: Vec::new(),
             images: Vec::new(),
             depth_image: None,
+            names: Vec::new(),
         }
     }
 
     // The dependencies list built may contain duplicates, but dfs search ensures
     // we don't traverse the children of a node we have already visited via memoization
-    pub fn add_pass<T>(&mut self, pass: Pass<'a, T>) {
+    pub fn add_pass<T>(&mut self, name: &'a str, pass: Pass<'a, T>) {
+        self.names.push(name);
         let pass_id = self.dependencies.len();
         self.dependencies.push(Vec::new());
 
@@ -129,6 +132,20 @@ impl<'a> Rendergraph<'a> {
         self.execution_groups = dependency_levels;
     }
 
+    fn debug_execution_groups(&self) {
+        for group in &self.execution_groups {
+            if self.execution_groups.is_empty() {
+                println!();
+                return;
+            }
+            for pass in group {
+                print!("{} ", self.names[*pass]);
+            }
+            println!();
+        }
+        println!();
+    }
+
     fn dfs(
         &self,
         index: usize,
@@ -204,7 +221,7 @@ impl<'a> Rendergraph<'a> {
         }
 
         // dbg!(&self.dependencies);
-        // dbg!(&self.execution_groups);
+        self.debug_execution_groups();
     }
 }
 
@@ -353,7 +370,12 @@ impl<'a> Pass<'a, GraphicsPass> {
         }))
     }
 
-    pub fn render_target(mut self, name: &'a str, image: &Image, load_op: vk::AttachmentLoadOp) -> Self {
+    pub fn render_target(
+        mut self,
+        name: &'a str,
+        image: &Image,
+        load_op: vk::AttachmentLoadOp,
+    ) -> Self {
         if let RenderPass::Graphics(data) = &mut self.render_pass {
             data.render_targets.push(AttachmentDesc {
                 view: image.view,
@@ -364,7 +386,12 @@ impl<'a> Pass<'a, GraphicsPass> {
         self
     }
 
-    pub fn depth_target(mut self, name: &'a str, image: &Image, load_op: vk::AttachmentLoadOp) -> Self {
+    pub fn depth_target(
+        mut self,
+        name: &'a str,
+        image: &Image,
+        load_op: vk::AttachmentLoadOp,
+    ) -> Self {
         if let RenderPass::Graphics(data) = &mut self.render_pass {
             data.depth_target = Some(AttachmentDesc {
                 view: image.view,

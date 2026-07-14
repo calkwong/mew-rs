@@ -707,6 +707,7 @@ fn render_loop(renderer: &mut Renderer) {
         let group_count_x = mew::get_group_count(renderables_count as u32, 256);
 
         rdg.add_pass(
+            "Culling",
             Pass::new_compute()
                 .write_buffer("draw_indirect")
                 .write_buffer("dispatch")
@@ -734,6 +735,7 @@ fn render_loop(renderer: &mut Renderer) {
         // );
 
         rdg.add_pass(
+            "Rasterization",
             Pass::new_graphics()
                 .read_buffer("draw_indirect")
                 .read_buffer("dispatch")
@@ -783,6 +785,7 @@ fn render_loop(renderer: &mut Renderer) {
                 dst_id: renderer.framebuffer.depth_pyramid_storage_index,
             };
         rdg.add_pass(
+            "Build hi-z",
             Pass::new_compute()
                 .read_image(
                     "depth",
@@ -812,6 +815,7 @@ fn render_loop(renderer: &mut Renderer) {
         let group_count_x = mew::get_group_count(renderer.backend.swapchain.extent.width, 8);
         let group_count_y = mew::get_group_count(renderer.backend.swapchain.extent.height, 8);
         rdg.add_pass(
+            "Tonemap",
             Pass::new_compute()
                 .read_image(
                     "draw",
