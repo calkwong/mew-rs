@@ -589,54 +589,70 @@ impl Device {
         }
     }
 
-    pub fn register_image(&self, view: vk::ImageView, tag: RenderResourceTag) -> u32 {
+    pub fn register_sampled_image(&self, view: vk::ImageView) -> u32 {
         let descriptor = &self.descriptor;
 
         let info = [vk::DescriptorImageInfo::default()
             .image_layout(vk::ImageLayout::GENERAL)
             .image_view(view)];
 
-        match tag {
-            RenderResourceTag::Storage => {
-                let handle = { descriptor.storage_image_count.lock().unwrap().add() };
-                let index = get_descriptor_index(RenderResourceTag::Storage);
+        let handle = { descriptor.image_handle.lock().unwrap().add() };
 
-                let write = vk::WriteDescriptorSet::default()
-                    .dst_set(descriptor.sets[index])
-                    .dst_binding(0)
-                    .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
-                    .dst_array_element(handle)
-                    .image_info(&info)
-                    .descriptor_count(1);
+        let index = get_descriptor_index(RenderResourceTag::Sampled);
+        let write = vk::WriteDescriptorSet::default()
+            .dst_set(descriptor.sets[index])
+            .dst_binding(0)
+            .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+            .dst_array_element(handle)
+            .image_info(&info)
+            .descriptor_count(1);
 
-                let writes = [write];
-                unsafe {
-                    self.device.update_descriptor_sets(&writes, &[]);
-                }
-
-                handle
-            }
-            RenderResourceTag::Sampled => {
-                let handle = { descriptor.sample_image_count.lock().unwrap().add() };
-                let index = get_descriptor_index(RenderResourceTag::Sampled);
-
-                let write = vk::WriteDescriptorSet::default()
-                    .dst_set(descriptor.sets[index])
-                    .dst_binding(0)
-                    .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
-                    .dst_array_element(handle)
-                    .image_info(&info)
-                    .descriptor_count(1);
-
-                let writes = [write];
-                unsafe {
-                    self.device.update_descriptor_sets(&writes, &[]);
-                }
-
-                handle
-            }
-            _ => panic!("Incorrect tag"),
+        let writes = [write];
+        unsafe {
+            self.device.update_descriptor_sets(&writes, &[]);
         }
+
+        handle
+    }
+
+    pub fn register_image(&self, view: vk::ImageView) -> u32 {
+        let descriptor = &self.descriptor;
+
+        let info = [vk::DescriptorImageInfo::default()
+            .image_layout(vk::ImageLayout::GENERAL)
+            .image_view(view)];
+
+        let handle = { descriptor.image_handle.lock().unwrap().add() };
+
+        let index = get_descriptor_index(RenderResourceTag::Storage);
+        let write = vk::WriteDescriptorSet::default()
+            .dst_set(descriptor.sets[index])
+            .dst_binding(0)
+            .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+            .dst_array_element(handle)
+            .image_info(&info)
+            .descriptor_count(1);
+
+        let writes = [write];
+        unsafe {
+            self.device.update_descriptor_sets(&writes, &[]);
+        }
+
+        let index = get_descriptor_index(RenderResourceTag::Sampled);
+        let write = vk::WriteDescriptorSet::default()
+            .dst_set(descriptor.sets[index])
+            .dst_binding(0)
+            .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+            .dst_array_element(handle)
+            .image_info(&info)
+            .descriptor_count(1);
+
+        let writes = [write];
+        unsafe {
+            self.device.update_descriptor_sets(&writes, &[]);
+        }
+
+        handle
     }
 }
 

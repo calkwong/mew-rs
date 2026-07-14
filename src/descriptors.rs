@@ -29,8 +29,7 @@ pub struct Descriptor {
     pub sets: [vk::DescriptorSet; 4],
     pub layouts: [vk::DescriptorSetLayout; 4],
 
-    pub storage_image_count: ImageTracker,
-    pub sample_image_count: ImageTracker,
+    pub image_handle: ImageTracker,
 }
 
 impl Descriptor {
@@ -43,9 +42,7 @@ impl Descriptor {
             pool,
             sets,
             layouts,
-            storage_image_count: Arc::new(Mutex::new(CountTracker { next: 0 })),
-            // TODO: hack so index = 0 is always invalid
-            sample_image_count: Arc::new(Mutex::new(CountTracker { next: 1 })),
+            image_handle: Arc::new(Mutex::new(CountTracker { next: 0 })),
         }
     }
 

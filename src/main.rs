@@ -89,28 +89,33 @@ impl Renderer {
             allocator,
             backend.swapchain.extent,
             vk::Format::R16G16B16A16_SFLOAT,
-            vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_SRC,
+            vk::ImageUsageFlags::STORAGE
+                | vk::ImageUsageFlags::SAMPLED
+                | vk::ImageUsageFlags::TRANSFER_SRC
+                | vk::ImageUsageFlags::COLOR_ATTACHMENT,
             vk::ImageAspectFlags::COLOR,
             false,
         );
-        let draw_index = backend.register_image(draw_image.view, RenderResourceTag::Storage);
+        let draw_index = backend.register_image(draw_image.view);
 
         let depth_image = mew::create_image(
             device,
             allocator,
             backend.swapchain.extent,
             vk::Format::D32_SFLOAT,
-            vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
+            vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT
+                | vk::ImageUsageFlags::STORAGE
+                | vk::ImageUsageFlags::SAMPLED,
             vk::ImageAspectFlags::DEPTH,
             false,
         );
-        let depth_index = backend.register_image(depth_image.view, RenderResourceTag::Sampled);
+        let depth_index = backend.register_image(depth_image.view);
 
         let swapchain_indices: Vec<u32> = backend
             .swapchain
             .views
             .iter()
-            .map(|view| backend.register_image(*view, RenderResourceTag::Storage))
+            .map(|view| backend.register_image(*view))
             .collect();
 
         let hiz_width = mew::nearest_power_of_two(backend.swapchain.extent.width);
@@ -127,8 +132,7 @@ impl Renderer {
             vk::ImageAspectFlags::COLOR,
             true,
         );
-        let depth_pyramid_sample_index =
-            backend.register_image(depth_pyramid.view, RenderResourceTag::Sampled);
+        let depth_pyramid_sample_index = backend.register_image(depth_pyramid.view);
         let max_mip_level = hiz_width.max(hiz_height).ilog2();
         let mut depth_pyramid_storage_index = 0;
         let depth_pyramid_views = std::array::from_fn(|i| {
@@ -145,7 +149,7 @@ impl Renderer {
                     layer_count: 1,
                 },
             );
-            let handle = backend.register_image(view, RenderResourceTag::Storage);
+            let handle = backend.register_image(view);
             if i == 0 {
                 depth_pyramid_storage_index = handle;
             }
@@ -221,7 +225,7 @@ impl Renderer {
             meshes,
         );
 
-        let _objects = mew::as_bytes(&scene.renderables);
+        let objects = mew::as_bytes(&scene.renderables);
 
         let mut instances: Vec<mew::loader::ObjectData> = Vec::new();
         let n = 10;
@@ -259,8 +263,8 @@ impl Renderer {
             vk::BufferUsageFlags::STORAGE_BUFFER
                 | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
                 | vk::BufferUsageFlags::TRANSFER_DST,
-            // objects,
-            instances,
+            objects,
+            // instances,
         );
 
         let materials = mew::as_bytes(&scene.materials);
@@ -446,7 +450,6 @@ impl ApplicationHandler for App {
         match event {
             // This should be providing us with new dims, but it's returning outdated dims which can cause OOB surface extent - possibly Niri specific?
             winit::event::WindowEvent::Resized(_) => {
-                println!("From windowevent::resized");
                 if let Some(renderer) = self.renderer.as_mut() {
                     recreate_swapchain(&mut renderer.backend, &renderer.window);
                     on_swapchain_resize(renderer);
@@ -463,7 +466,6 @@ impl ApplicationHandler for App {
                     render_loop(renderer);
 
                     if renderer.backend.swapchain.dirty {
-                        println!("From swapchain dirty");
                         recreate_swapchain(&mut renderer.backend, &renderer.window);
                         on_swapchain_resize(renderer);
 
@@ -907,6 +909,7 @@ fn on_swapchain_resize(renderer: &mut Renderer) {
         renderer.backend.swapchain.extent,
         vk::Format::R16G16B16A16_SFLOAT,
         vk::ImageUsageFlags::STORAGE
+            | vk::ImageUsageFlags::SAMPLED
             | vk::ImageUsageFlags::TRANSFER_SRC
             | vk::ImageUsageFlags::COLOR_ATTACHMENT,
         vk::ImageAspectFlags::COLOR,
@@ -918,7 +921,7 @@ fn on_swapchain_resize(renderer: &mut Renderer) {
         &mut allocator,
         renderer.backend.swapchain.extent,
         vk::Format::D32_SFLOAT,
-        vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
+        vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::STORAGE,
         vk::ImageAspectFlags::DEPTH,
         false,
     );

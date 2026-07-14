@@ -70,7 +70,7 @@ pub fn create_swapchain(
         .min_image_count(desired_image_count)
         .image_format(swapchain_format)
         .image_extent(surface_resolution)
-        .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::STORAGE)
+        .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED)
         .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
         .pre_transform(pre_transform)
         .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
@@ -190,5 +190,5 @@ fn get_present_mode(
         .cloned()
         .find(|&mode| mode == vk::PresentModeKHR::MAILBOX)
         .unwrap_or(vk::PresentModeKHR::FIFO)
-        // .unwrap_or(vk::PresentModeKHR::IMMEDIATE)
+    // .unwrap_or(vk::PresentModeKHR::IMMEDIATE)
 }
