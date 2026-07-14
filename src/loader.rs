@@ -285,7 +285,7 @@ pub fn load_gltf(
                 vk::ImageAspectFlags::COLOR,
                 &offsets,
                 &data,
-                Some(ktx2.levels().len()),
+                true,
             )
         })
         .collect();

@@ -1,5 +1,5 @@
 use ash::vk::{self, Fence};
-use glam::{Vec4Swizzles};
+use glam::Vec4Swizzles;
 use mew::descriptors::RenderResourceTag;
 use mew::loader::load_gltf;
 use mew::rendergraph::{Pass, Rendergraph};
@@ -91,7 +91,7 @@ impl Renderer {
             vk::Format::R16G16B16A16_SFLOAT,
             vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_SRC,
             vk::ImageAspectFlags::COLOR,
-            None,
+            false,
         );
         let draw_index = backend.register_image(draw_image.view, RenderResourceTag::Storage);
 
@@ -102,7 +102,7 @@ impl Renderer {
             vk::Format::D32_SFLOAT,
             vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
             vk::ImageAspectFlags::DEPTH,
-            None,
+            false,
         );
         let depth_index = backend.register_image(depth_image.view, RenderResourceTag::Sampled);
 
@@ -115,7 +115,6 @@ impl Renderer {
 
         let hiz_width = mew::nearest_power_of_two(backend.swapchain.extent.width);
         let hiz_height = mew::nearest_power_of_two(backend.swapchain.extent.height);
-        let hiz_mips = hiz_width.max(hiz_height).ilog2() + 1;
         let depth_pyramid = mew::create_image(
             device,
             allocator,
@@ -126,11 +125,11 @@ impl Renderer {
             vk::Format::R32_SFLOAT,
             vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED,
             vk::ImageAspectFlags::COLOR,
-            Some(hiz_mips as _),
+            true,
         );
         let depth_pyramid_sample_index =
             backend.register_image(depth_pyramid.view, RenderResourceTag::Sampled);
-        let max_mip_level = hiz_mips - 1;
+        let max_mip_level = hiz_width.max(hiz_height).ilog2();
         let mut depth_pyramid_storage_index = 0;
         let depth_pyramid_views = std::array::from_fn(|i| {
             let view = mew::create_image_view(
@@ -447,6 +446,7 @@ impl ApplicationHandler for App {
         match event {
             // This should be providing us with new dims, but it's returning outdated dims which can cause OOB surface extent - possibly Niri specific?
             winit::event::WindowEvent::Resized(_) => {
+                println!("From windowevent::resized");
                 if let Some(renderer) = self.renderer.as_mut() {
                     recreate_swapchain(&mut renderer.backend, &renderer.window);
                     on_swapchain_resize(renderer);
@@ -463,6 +463,7 @@ impl ApplicationHandler for App {
                     render_loop(renderer);
 
                     if renderer.backend.swapchain.dirty {
+                        println!("From swapchain dirty");
                         recreate_swapchain(&mut renderer.backend, &renderer.window);
                         on_swapchain_resize(renderer);
 
@@ -909,7 +910,7 @@ fn on_swapchain_resize(renderer: &mut Renderer) {
             | vk::ImageUsageFlags::TRANSFER_SRC
             | vk::ImageUsageFlags::COLOR_ATTACHMENT,
         vk::ImageAspectFlags::COLOR,
-        None,
+        false,
     );
 
     renderer.framebuffer.depth_image = mew::create_image(
@@ -919,12 +920,11 @@ fn on_swapchain_resize(renderer: &mut Renderer) {
         vk::Format::D32_SFLOAT,
         vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
         vk::ImageAspectFlags::DEPTH,
-        None,
+        false,
     );
 
     let hiz_width = mew::nearest_power_of_two(renderer.backend.swapchain.extent.width);
     let hiz_height = mew::nearest_power_of_two(renderer.backend.swapchain.extent.height);
-    let hiz_mips = hiz_width.max(hiz_height).ilog2() + 1;
     renderer.framebuffer.depth_pyramid = mew::create_image(
         device,
         &mut allocator,
@@ -935,9 +935,9 @@ fn on_swapchain_resize(renderer: &mut Renderer) {
         vk::Format::R32_SFLOAT,
         vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED,
         vk::ImageAspectFlags::COLOR,
-        Some(hiz_mips as _),
+        true,
     );
-    let max_mip_level = hiz_mips - 1;
+    let max_mip_level = hiz_width.max(hiz_height).ilog2();
     renderer.framebuffer.depth_pyramid_views = std::array::from_fn(|i| {
         let view = &mut renderer.framebuffer.depth_pyramid_views[i];
         unsafe {
@@ -958,8 +958,6 @@ fn on_swapchain_resize(renderer: &mut Renderer) {
             },
         )
     });
-    // TODO:
-    // register 11 views with descriptor, skipping writes if no view
 
     // Update descriptors
     renderer.backend.update_image_descriptor(
@@ -992,7 +990,7 @@ fn on_swapchain_resize(renderer: &mut Renderer) {
 
     // TODO: verify this is correct
     // Only updating relevant descriptors, which is hiz_mips count
-    (0..hiz_mips).for_each(|i| {
+    (0..max_mip_level + 1).for_each(|i| {
         let view = &renderer.framebuffer.depth_pyramid_views[i as usize];
         renderer.backend.update_image_descriptor(
             i + renderer.framebuffer.depth_pyramid_storage_index,

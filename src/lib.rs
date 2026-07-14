@@ -561,24 +561,28 @@ impl Device {
     pub fn register_samplers(&self, samplers: &[vk::Sampler]) {
         let descriptor = &self.descriptor;
 
-        let infos: Vec<[vk::DescriptorImageInfo; 1]> = samplers.iter().map(|sampler|{
-            [vk::DescriptorImageInfo::default().sampler(*sampler)]
-        }).collect();
-
+        let infos: Vec<[vk::DescriptorImageInfo; 1]> = samplers
+            .iter()
+            .map(|sampler| [vk::DescriptorImageInfo::default().sampler(*sampler)])
+            .collect();
 
         let index = get_descriptor_index(RenderResourceTag::Sampler);
 
         let set = descriptor.sets[index];
 
-        let writes: Vec<vk::WriteDescriptorSet> = infos.iter().enumerate().map(|(i, info)|{
-            vk::WriteDescriptorSet::default()
-                .dst_set(set)
-                .dst_binding(0)
-                .descriptor_type(vk::DescriptorType::SAMPLER)
-                .dst_array_element(i as _)
-                .image_info(info)
-                .descriptor_count(1)
-        }).collect();
+        let writes: Vec<vk::WriteDescriptorSet> = infos
+            .iter()
+            .enumerate()
+            .map(|(i, info)| {
+                vk::WriteDescriptorSet::default()
+                    .dst_set(set)
+                    .dst_binding(0)
+                    .descriptor_type(vk::DescriptorType::SAMPLER)
+                    .dst_array_element(i as _)
+                    .image_info(info)
+                    .descriptor_count(1)
+            })
+            .collect();
 
         unsafe {
             self.device.update_descriptor_sets(&writes, &[]);
@@ -950,7 +954,7 @@ pub fn create_sampled_image(
     aspect: vk::ImageAspectFlags,
     offsets: &[usize],
     data: &[u8],
-    mip: Option<usize>,
+    mip: bool,
 ) -> Image {
     let size = data.len() as u64;
 
@@ -1043,8 +1047,14 @@ pub fn create_image(
     format: vk::Format,
     usage: vk::ImageUsageFlags,
     aspect: vk::ImageAspectFlags,
-    mip: Option<usize>,
+    mip: bool,
 ) -> Image {
+    let mip_levels = if mip {
+        extent.width.max(extent.height).ilog2() + 1
+    } else {
+        1
+    };
+
     let image_create_info = vk::ImageCreateInfo::default()
         .image_type(vk::ImageType::TYPE_2D)
         .format(format)
@@ -1053,7 +1063,7 @@ pub fn create_image(
             height: extent.height,
             depth: 1,
         })
-        .mip_levels(mip.unwrap_or(1) as _)
+        .mip_levels(mip_levels)
         .array_layers(1)
         .usage(usage)
         .samples(vk::SampleCountFlags::TYPE_1);
@@ -1189,12 +1199,10 @@ pub fn create_sampler(
     unsafe { device.create_sampler(&info, None).unwrap() }
 }
 
-pub fn nearest_power_of_two(extent: u32) -> u32
-{
+pub fn nearest_power_of_two(extent: u32) -> u32 {
     1 << extent.ilog2()
 }
 
-pub fn next_power_of_two(extent: u32) -> u32
-{
+pub fn next_power_of_two(extent: u32) -> u32 {
     nearest_power_of_two(extent) << 1
 }
