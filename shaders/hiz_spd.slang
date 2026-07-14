@@ -127,7 +127,7 @@ float spd_reduce_coherent_load(int2 base, uint slice)
 
 void spd_downsample_mips_0_1(uint x, uint y, uint2 wg_id, uint local_id, uint mips, uint slice)
 {
-    SamplerState samp = get_sampler<SamplerState>(1);
+    SamplerState samp = get_sampler<SamplerState>(DEPTH_REDUCE);
     Texture2D<float> depth_tex = get_sampled_image<Texture2D<float>>(pc.src_id);
 
     float v[4];

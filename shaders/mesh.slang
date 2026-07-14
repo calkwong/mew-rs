@@ -47,7 +47,7 @@ void ps_main(Interp in, out float4 out_color: SV_Target0)
     // if (material.diffuse_id != 0)
     // {
     //     Texture2D tex = get_sampled_image<Texture2D>(material.diffuse_id);
-    //     SamplerState samp = get_sampler<SamplerState>(0);
+    //     SamplerState samp = get_sampler<SamplerState>(LINEAR_SAMPLER);
     //     albedo *= tex.Sample(samp, in.uv);
     // }
 

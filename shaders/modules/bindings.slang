@@ -19,6 +19,9 @@ public T get_sampled_image<T>(uint handle)
     return sampled_images[handle].asOpaqueDescriptor<T>();
 }
 
+public static const uint LINEAR_SAMPLER = 0;
+public static const uint DEPTH_REDUCE = 1;
+
 public T get_sampler<T>(uint handle)
     where T : IOpaqueDescriptor
 {
