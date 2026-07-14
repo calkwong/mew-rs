@@ -183,7 +183,7 @@ impl<'a> Rendergraph<'a> {
         self.build_execution_groups();
     }
 
-    pub fn run(&self, device: &ash::Device, cmd: vk::CommandBuffer, layout: vk::PipelineLayout) {
+    fn build_image_barriers(&self) -> Vec<vk::ImageMemoryBarrier2<'_>> {
         let mut image_memory_barriers: Vec<vk::ImageMemoryBarrier2> = self
             .images
             .iter()
@@ -214,6 +214,12 @@ impl<'a> Rendergraph<'a> {
             )
         }
 
+        image_memory_barriers
+    }
+
+    pub fn run(&self, device: &ash::Device, cmd: vk::CommandBuffer, layout: vk::PipelineLayout) {
+        let image_memory_barriers = self.build_image_barriers();
+
         let dependency_info =
             vk::DependencyInfo::default().image_memory_barriers(&image_memory_barriers);
         unsafe { device.cmd_pipeline_barrier2(cmd, &dependency_info) };
@@ -230,7 +236,7 @@ impl<'a> Rendergraph<'a> {
         }
 
         // dbg!(&self.dependencies);
-        self.debug_execution_groups();
+        // self.debug_execution_groups();
     }
 }
 
@@ -279,7 +285,9 @@ impl<'a, T> Pass<'a, T> {
         self
     }
 
-    // TODO: handle temporal texture ie. TAA History
+    // TODO: handle temporal texture ie. TAA History - we don't ever want an image transition for these
+    // If can track resources via handles, we can use some of the bits for metadata as we don't need all 32 bits
+    // The current holdup is buffer addresses being u64
     pub fn read_image(
         mut self,
         name: &'a str,
