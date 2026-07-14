@@ -1,5 +1,5 @@
 use ash::vk::{self, Fence};
-use glam::Vec4Swizzles;
+use glam::{Vec2, Vec4Swizzles};
 use mew::descriptors::RenderResourceTag;
 use mew::loader::load_gltf;
 use mew::rendergraph::{Pass, Rendergraph};
@@ -70,11 +70,26 @@ impl Renderer {
     fn new(window: Window) -> Self {
         let backend = mew::Device::new(&window);
 
-        let samplers = vec![create_sampler(
-            &backend.device,
-            vk::Filter::LINEAR,
-            vk::SamplerAddressMode::REPEAT,
-        )];
+        let mut sampler_pnext = vk::SamplerReductionModeCreateInfo::default()
+            .reduction_mode(vk::SamplerReductionMode::MIN);
+
+        let samplers = vec![
+            create_sampler(
+                &backend.device,
+                vk::Filter::LINEAR,
+                vk::SamplerAddressMode::REPEAT,
+                vk::SamplerMipmapMode::LINEAR,
+                None,
+            ),
+            create_sampler(
+                &backend.device,
+                vk::Filter::LINEAR,
+                vk::SamplerAddressMode::CLAMP_TO_EDGE,
+                vk::SamplerMipmapMode::NEAREST,
+                Some(&mut sampler_pnext),
+            ),
+        ];
+
         backend.register_samplers(&samplers);
 
         let camera = Camera::default().position(glam::Vec3::new(0.0, 0.0, 5.0));
@@ -143,7 +158,7 @@ impl Renderer {
                 vk::ImageViewType::TYPE_2D,
                 vk::ImageSubresourceRange {
                     aspect_mask: vk::ImageAspectFlags::COLOR,
-                    base_mip_level: i.max(max_mip_level as _) as _,
+                    base_mip_level: i.min(max_mip_level as _) as _,
                     level_count: 1,
                     base_array_layer: 0,
                     layer_count: 1,
@@ -225,7 +240,7 @@ impl Renderer {
             meshes,
         );
 
-        let objects = mew::as_bytes(&scene.renderables);
+        let _objects = mew::as_bytes(&scene.renderables);
 
         let mut instances: Vec<mew::loader::ObjectData> = Vec::new();
         let n = 10;
@@ -263,8 +278,8 @@ impl Renderer {
             vk::BufferUsageFlags::STORAGE_BUFFER
                 | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
                 | vk::BufferUsageFlags::TRANSFER_DST,
-            objects,
-            // instances,
+            // objects,
+            instances,
         );
 
         let materials = mew::as_bytes(&scene.materials);
@@ -756,24 +771,41 @@ fn render_loop(renderer: &mut Renderer) {
         // device.cmd_end_query(cmd, frame_resource.pipeline_query, 0);
     }
 
-    // {
-    //     let width = mew::next_power_of_two(renderer.framebuffer.depth_pyramid.extent.width);
-    //     let height = mew::next_power_of_two(renderer.framebuffer.depth_pyramid.extent.height);
-    //     let groupcount_x = mew::get_group_count(width, 64);
-    //     let groupcount_y = mew::get_group_count(height, 64);
+    {
+        let width = mew::next_power_of_two(renderer.framebuffer.depth_pyramid.extent.width);
+        let height = mew::next_power_of_two(renderer.framebuffer.depth_pyramid.extent.height);
+        let group_count_x = mew::get_group_count(width, 64);
+        let group_count_y = mew::get_group_count(height, 64);
 
-    //     let hiz_width = renderer.framebuffer.depth_pyramid.extent.width;
-    //     let hiz_height = renderer.framebuffer.depth_pyramid.extent.height;
+        let hiz_width = renderer.framebuffer.depth_pyramid.extent.width;
+        let hiz_height = renderer.framebuffer.depth_pyramid.extent.height;
 
-    //     renderer.spd.constants = basic_renderer::SpdConstants {
-    //         spd_buffer: renderer.spd_buffer.address,
-    //         rcp_resolution: Vec2::ONE / Vec2::new(width as _, height as _),
-    //         mips: hiz_width.max(hiz_height).ilog2() + 1,
-    //         num_wgs: groupcount_x * groupcount_y,
-    //         src_id: renderer.framebuffer.depth_index,
-    //         dst_id: renderer.framebuffer.depth_pyramid_storage_index,
-    //     }
-    // }
+        renderer.spd.constants = basic_renderer::SpdConstants {
+            spd_buffer: renderer.spd_buffer.address,
+            rcp_resolution: Vec2::ONE / Vec2::new(width as _, height as _),
+            mips: hiz_width.max(hiz_height).ilog2() + 1,
+            num_wgs: group_count_x * group_count_y,
+            src_id: renderer.framebuffer.depth_index,
+            dst_id: renderer.framebuffer.depth_pyramid_storage_index,
+        };
+        rdg.add_pass(
+            Pass::new_compute()
+                .read_image(
+                    "depth",
+                    renderer.framebuffer.depth_image.image,
+                    vk::ImageAspectFlags::DEPTH,
+                )
+                .write_image(
+                    "hiz",
+                    renderer.framebuffer.depth_pyramid.image,
+                    vk::ImageAspectFlags::COLOR,
+                )
+                .write_buffer("spd")
+                .constants(mew::push_constants_as_bytes(&renderer.spd.constants))
+                .pipeline(renderer.spd_pipeline)
+                .dispatch(group_count_x, group_count_y, 1),
+        );
+    }
 
     // Pass 3 - Copy to swapchain
     {
@@ -788,6 +820,12 @@ fn render_loop(renderer: &mut Renderer) {
                 .read_image(
                     "draw",
                     renderer.framebuffer.draw_image.image,
+                    vk::ImageAspectFlags::COLOR,
+                )
+                // TODO: hack to not cull hiz pass
+                .read_image(
+                    "hiz",
+                    renderer.framebuffer.depth_pyramid.image,
                     vk::ImageAspectFlags::COLOR,
                 )
                 .write_image(
@@ -921,7 +959,9 @@ fn on_swapchain_resize(renderer: &mut Renderer) {
         &mut allocator,
         renderer.backend.swapchain.extent,
         vk::Format::D32_SFLOAT,
-        vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::STORAGE,
+        vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT
+            | vk::ImageUsageFlags::SAMPLED
+            | vk::ImageUsageFlags::STORAGE,
         vk::ImageAspectFlags::DEPTH,
         false,
     );
@@ -954,7 +994,7 @@ fn on_swapchain_resize(renderer: &mut Renderer) {
             vk::ImageViewType::TYPE_2D,
             vk::ImageSubresourceRange {
                 aspect_mask: vk::ImageAspectFlags::COLOR,
-                base_mip_level: i.max(max_mip_level as _) as _,
+                base_mip_level: i.min(max_mip_level as _) as _,
                 level_count: 1,
                 base_array_layer: 0,
                 layer_count: 1,
@@ -1005,9 +1045,9 @@ fn on_swapchain_resize(renderer: &mut Renderer) {
 
 fn main() {
     // TODO: can we set this at runtime
-    // unsafe {
-    //     std::env::remove_var("WAYLAND_DISPLAY");
-    // }
+    unsafe {
+        std::env::remove_var("WAYLAND_DISPLAY");
+    }
 
     let event_loop = EventLoop::new().unwrap();
 

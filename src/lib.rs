@@ -228,6 +228,7 @@ impl Device {
         assert!(enabled_vulkan_1_2_features.scalar_block_layout > 0);
         assert!(enabled_vulkan_1_2_features.runtime_descriptor_array > 0);
         assert!(enabled_vulkan_1_2_features.host_query_reset > 0);
+        assert!(enabled_vulkan_1_2_features.sampler_filter_minmax > 0);
         assert!(enabled_vulkan_1_3_features.synchronization2 > 0);
         assert!(enabled_vulkan_1_3_features.dynamic_rendering > 0);
 
@@ -243,7 +244,8 @@ impl Device {
             .runtime_descriptor_array(true)
             .draw_indirect_count(true)
             .scalar_block_layout(true)
-            .host_query_reset(true);
+            .host_query_reset(true)
+            .sampler_filter_minmax(true);
         let mut vulkan_1_3_features = vk::PhysicalDeviceVulkan13Features::default()
             .synchronization2(true)
             .dynamic_rendering(true);
@@ -1203,14 +1205,21 @@ pub fn create_sampler(
     device: &ash::Device,
     filter: vk::Filter,
     address: vk::SamplerAddressMode,
+    mipmap: vk::SamplerMipmapMode,
+    p_next: Option<&mut ash::vk::SamplerReductionModeCreateInfo>,
 ) -> vk::Sampler {
-    let info = vk::SamplerCreateInfo::default()
+    let mut info = vk::SamplerCreateInfo::default()
         .address_mode_u(address)
         .address_mode_v(address)
         .address_mode_w(address)
         .min_filter(filter)
         .mag_filter(filter)
+        .mipmap_mode(mipmap)
         .max_lod(vk::LOD_CLAMP_NONE);
+
+    if let Some(next) = p_next {
+        info = info.push_next(next);
+    }
 
     unsafe { device.create_sampler(&info, None).unwrap() }
 }
