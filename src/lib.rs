@@ -18,7 +18,7 @@ use winit::{
     window::Window,
 };
 
-pub mod basic_renderer;
+pub mod occlusion_renderer;
 pub mod camera;
 pub mod descriptors;
 pub mod loader;

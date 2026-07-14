@@ -9,7 +9,7 @@ use mew::{
     camera::{Camera, Key, KeyState},
     giga_barrier,
 };
-use mew::{basic_renderer, create_sampler};
+use mew::{occlusion_renderer, create_sampler};
 use std::time::Instant;
 use winit::{
     application::ApplicationHandler,
@@ -31,10 +31,7 @@ struct Renderer {
 
     scene_images: Vec<Image>,
 
-    cull: basic_renderer::CullRenderer,
-    mesh: basic_renderer::MeshRenderer,
-    copy: basic_renderer::CopyRenderer,
-    spd: basic_renderer::SpdRenderer,
+    occlusion_renderer: occlusion_renderer::OcclusionRenderer,
 
     copy_pipeline: vk::Pipeline,
     draw_pipeline: vk::Pipeline,
@@ -332,10 +329,7 @@ impl Renderer {
             last_frame_time: None,
             frame_index: 0,
             scene_images: scene.images,
-            cull: basic_renderer::CullRenderer::new(),
-            mesh: basic_renderer::MeshRenderer::new(),
-            copy: basic_renderer::CopyRenderer::new(),
-            spd: basic_renderer::SpdRenderer::new(),
+            occlusion_renderer: occlusion_renderer::OcclusionRenderer::new(),
             copy_pipeline,
             draw_pipeline,
             cull_pipeline,
@@ -696,7 +690,7 @@ fn render_loop(renderer: &mut Renderer) {
         let p00 = proj.x_axis.x;
         let p11 = proj.y_axis.y;
 
-        renderer.cull.constants = basic_renderer::CullConstants {
+        renderer.occlusion_renderer.cull_constants = occlusion_renderer::CullConstants {
             view,
             mesh_buffer: renderer.mesh_buffer.address,
             object_buffer: renderer.object_buffer.address,
@@ -716,16 +710,15 @@ fn render_loop(renderer: &mut Renderer) {
             Pass::new_compute()
                 .write_buffer("draw_indirect")
                 .write_buffer("dispatch")
-                .constants(mew::push_constants_as_bytes(&renderer.cull.constants))
+                .constants(mew::push_constants_as_bytes(&renderer.occlusion_renderer.cull_constants))
                 .pipeline(renderer.cull_pipeline)
                 .dispatch(group_count_x, 1, 1),
         );
     }
 
     // Pass 2 - Rasterization
-
     {
-        renderer.mesh.constants = basic_renderer::MeshConstants {
+        renderer.occlusion_renderer.render_constants = occlusion_renderer::RenderConstants {
             view_proj,
             vertex_buffer: renderer.vertex_buffer.address,
             mesh_buffer: renderer.mesh_buffer.address,
@@ -754,7 +747,7 @@ fn render_loop(renderer: &mut Renderer) {
                     &renderer.framebuffer.depth_image,
                     vk::AttachmentLoadOp::CLEAR,
                 )
-                .constants(mew::push_constants_as_bytes(&renderer.mesh.constants))
+                .constants(mew::push_constants_as_bytes(&renderer.occlusion_renderer.render_constants))
                 .pipeline(renderer.draw_pipeline)
                 .draw_indirect(
                     renderer.draw_indirect_buffer.buffer,
@@ -780,14 +773,15 @@ fn render_loop(renderer: &mut Renderer) {
         let hiz_width = renderer.framebuffer.depth_pyramid.extent.width;
         let hiz_height = renderer.framebuffer.depth_pyramid.extent.height;
 
-        renderer.spd.constants = basic_renderer::SpdConstants {
-            spd_buffer: renderer.spd_buffer.address,
-            rcp_resolution: Vec2::ONE / Vec2::new(width as _, height as _),
-            mips: hiz_width.max(hiz_height).ilog2() + 1,
-            num_wgs: group_count_x * group_count_y,
-            src_id: renderer.framebuffer.depth_index,
-            dst_id: renderer.framebuffer.depth_pyramid_storage_index,
-        };
+        renderer.occlusion_renderer.depth_pyramid_constants =
+            occlusion_renderer::DepthPyramidConstants {
+                spd_buffer: renderer.spd_buffer.address,
+                rcp_resolution: Vec2::ONE / Vec2::new(width as _, height as _),
+                mips: hiz_width.max(hiz_height).ilog2() + 1,
+                num_wgs: group_count_x * group_count_y,
+                src_id: renderer.framebuffer.depth_index,
+                dst_id: renderer.framebuffer.depth_pyramid_storage_index,
+            };
         rdg.add_pass(
             Pass::new_compute()
                 .read_image(
@@ -801,7 +795,9 @@ fn render_loop(renderer: &mut Renderer) {
                     vk::ImageAspectFlags::COLOR,
                 )
                 .write_buffer("spd")
-                .constants(mew::push_constants_as_bytes(&renderer.spd.constants))
+                .constants(mew::push_constants_as_bytes(
+                    &renderer.occlusion_renderer.depth_pyramid_constants,
+                ))
                 .pipeline(renderer.spd_pipeline)
                 .dispatch(group_count_x, group_count_y, 1),
         );
@@ -809,7 +805,7 @@ fn render_loop(renderer: &mut Renderer) {
 
     // Pass 3 - Copy to swapchain
     {
-        renderer.copy.constants = basic_renderer::CopyConstants {
+        renderer.occlusion_renderer.tonemap_constants = occlusion_renderer::TonemapConstants {
             src_id: renderer.framebuffer.draw_index,
             dst_id: renderer.framebuffer.swapchain_indices[swapchain_idx],
         };
@@ -822,7 +818,7 @@ fn render_loop(renderer: &mut Renderer) {
                     renderer.framebuffer.draw_image.image,
                     vk::ImageAspectFlags::COLOR,
                 )
-                // TODO: hack to not cull hiz pass
+                // TODO: hack to not cull hiz pass - this creates an unwanted dependency
                 .read_image(
                     "hiz",
                     renderer.framebuffer.depth_pyramid.image,
@@ -833,7 +829,9 @@ fn render_loop(renderer: &mut Renderer) {
                     renderer.backend.swapchain.images[swapchain_idx],
                     vk::ImageAspectFlags::COLOR,
                 )
-                .constants(mew::push_constants_as_bytes(&renderer.copy.constants))
+                .constants(mew::push_constants_as_bytes(
+                    &renderer.occlusion_renderer.tonemap_constants,
+                ))
                 .pipeline(renderer.copy_pipeline)
                 .dispatch(group_count_x, group_count_y, 1),
         );

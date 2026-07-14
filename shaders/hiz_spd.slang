@@ -1,24 +1,10 @@
-// yoinked from: https://github.com/GPUOpen-Effects/FidelityFX-SPD/blob/master/ffx-spd/ffx_spd.h
-// neat visualization: https://github.com/Goshido/android-vulkan/blob/master/docs/spd-algorithm.md
-// may be interesting in the future: https://github.com/Themaister/Granite/blob/master/assets/shaders/post/hiz.comp
-
+// Lightly modified version of https://github.com/GPUOpen-Effects/FidelityFX-SPD/blob/master/ffx-spd/ffx_spd.h
+//
 // Limitations:
 // - Strictly PoT only
-// - No texture array/cubemap support for now
-// - No proper oob check - reliant on no op behaviour from imageload/store, likely not good?
-//
-// Note to self:
-//
-// Instead of padding depth buffer to multiple of 64 or PoT, we lie to the shader that the depth buffer's size is PoT rounded up.
-// When building mip 0, uv is remapped; instead of downsampling 2x2 in 2 texels increments (of the actual depth buffer's dimensions), its stepping in 1.x texel increments
-// A small % of texels will be resampled for neighbouring 2x2 reductions, similar to our previous multi-pass hi-z shader. (Is this more conservative?)
-// The step size between SPD and multi-pass is slightly different but still under step size of 2 so expect different occlusion culling numbers.
-//
-// Tried padding to next PoT with far plane depth, but for stress test scene lots of objects were not culled (~1ms difference).
-// UV was remapped when sampling hi-z so we don't touch the padded data. Can't rule out that uv was remapped without errors.
-// Best guess is padded values at the edges are still interfering with culling despite UV remapping.
-// Renderdoc showed massive overdraw on the horizontal and vertical edges where padded data lived.
-// Yet to try padding with clamped (actual) depth values instead of far plane depth.
+// - No texture array/cubemap support
+// - Base mip must be next PoT because of the way SPD works, strictly requiring a 2 to 1 mapping (handwavy explanation)
+// - Modified for hiz, will need adjustment for general use
 
 import bindings;
 
@@ -28,11 +14,11 @@ import bindings;
 struct PushConstants
 {
     uint* spd_counter_buffer;
-	float2 rcp_resolution; // resolution of src image, not mip 0
+	float2 rcp_resolution; // resolution of src image mapped to next PoT
     uint mips;
 	uint num_wgs;
-	uint src_id; // texture to sample
-	uint dst_id; // image to write to, offset accordingly!
+	uint src_id; // depth texture to sample
+	uint dst_id; // mip level 0 of hi-z we write to, offset accordingly!
 };
 
 [[vk::push_constant]] PushConstants pc;
