@@ -17,6 +17,7 @@ pub struct Rendergraph<'a> {
     executes: Vec<Box<dyn Fn(&ash::Device, vk::CommandBuffer, vk::PipelineLayout) + 'a>>,
     images: Vec<vk::Image>,
     depth_image: Option<vk::Image>,
+    roots: Vec<usize>,
     names: Vec<&'a str>,
 }
 
@@ -42,8 +43,15 @@ impl<'a> Rendergraph<'a> {
             executes: Vec::new(),
             images: Vec::new(),
             depth_image: None,
+            roots: Vec::new(),
             names: Vec::new(),
         }
+    }
+
+    // TODO: refactor for root to be determined by resource output instead of using a render pass
+    pub fn add_root_pass<T>(&mut self, name: &'a str, pass: Pass<'a, T>) {
+        self.roots.push( self.dependencies.len());
+        self.add_pass(name, pass);
     }
 
     // The dependencies list built may contain duplicates, but dfs search ensures
@@ -123,12 +131,14 @@ impl<'a> Rendergraph<'a> {
 
     fn build_execution_groups(&mut self) {
         let len = self.dependencies.len();
-        let root_index = len - 1;
 
         let mut dependency_levels: Vec<Vec<usize>> = vec![Vec::new(); len];
         let mut dependency_map: Vec<Option<i32>> = vec![None; len];
 
-        self.dfs(root_index, &mut dependency_levels, &mut dependency_map);
+        for index in &self.roots {
+            self.dfs(*index, &mut dependency_levels, &mut dependency_map);
+        }
+
         self.execution_groups = dependency_levels;
     }
 
@@ -139,11 +149,10 @@ impl<'a> Rendergraph<'a> {
                 return;
             }
             for pass in group {
-                print!("{} ", self.names[*pass]);
+                print!("{}, ", self.names[*pass]);
             }
             println!();
         }
-        println!();
     }
 
     fn dfs(

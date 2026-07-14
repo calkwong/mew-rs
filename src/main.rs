@@ -784,7 +784,7 @@ fn render_loop(renderer: &mut Renderer) {
                 src_id: renderer.framebuffer.depth_index,
                 dst_id: renderer.framebuffer.depth_pyramid_storage_index,
             };
-        rdg.add_pass(
+        rdg.add_root_pass(
             "Build hi-z",
             Pass::new_compute()
                 .read_image(
@@ -814,18 +814,12 @@ fn render_loop(renderer: &mut Renderer) {
         };
         let group_count_x = mew::get_group_count(renderer.backend.swapchain.extent.width, 8);
         let group_count_y = mew::get_group_count(renderer.backend.swapchain.extent.height, 8);
-        rdg.add_pass(
+        rdg.add_root_pass(
             "Tonemap",
             Pass::new_compute()
                 .read_image(
                     "draw",
                     renderer.framebuffer.draw_image.image,
-                    vk::ImageAspectFlags::COLOR,
-                )
-                // TODO: hack to not cull hiz pass - this creates an unwanted dependency
-                .read_image(
-                    "hiz",
-                    renderer.framebuffer.depth_pyramid.image,
                     vk::ImageAspectFlags::COLOR,
                 )
                 .write_image(
