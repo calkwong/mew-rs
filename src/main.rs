@@ -326,8 +326,6 @@ impl Renderer {
         );
         spd_buffer.handle = backend.register_buffer(spd_buffer.buffer, vk::DescriptorType::STORAGE_BUFFER);
 
-        dbg!(draw_indirect_buffer.handle & ((1 << 22) - 1));
-
         Self {
             window,
             backend,

@@ -525,7 +525,7 @@ impl Device {
     }
 
     // TODO: no longer need tag because we share handle?
-    // TODO: extract only first 22 bits
+    // TODO: extract only first 21 bits
     pub fn update_image_descriptor(
         &self,
         handle: u32,
@@ -575,7 +575,6 @@ impl Device {
         }
     }
 
-    // TODO: UBO is binding 0, SSBO binding 1, how do we allocate the correct descriptor handle?
     pub fn register_buffer(
         &self,
         buffer: ash::vk::Buffer,
@@ -590,11 +589,16 @@ impl Device {
             range: vk::WHOLE_SIZE,
         }];
 
-        let mut handle = { descriptor.buffer_handle.lock().unwrap().add() };
-        let tag = match descriptor_type {
-            vk::DescriptorType::UNIFORM_BUFFER => RenderResourceTag::UniformBuffer,
-            vk::DescriptorType::STORAGE_BUFFER => RenderResourceTag::StorageBuffer,
-            _ => panic!("Not supported/implemented"),
+        let (mut handle, tag) = match descriptor_type {
+            vk::DescriptorType::UNIFORM_BUFFER => (
+                descriptor.ubo_handle.lock().unwrap().add(),
+                RenderResourceTag::UniformBuffer,
+            ),
+            vk::DescriptorType::STORAGE_BUFFER => (
+                descriptor.ssbo_handle.lock().unwrap().add(),
+                RenderResourceTag::StorageBuffer,
+            ),
+            _ => panic!("Currently support UBO / SSBO only"),
         };
 
         let index = get_descriptor_index(tag);
@@ -612,7 +616,7 @@ impl Device {
         }
 
         // Set resource type
-        handle |= (tag as u32) << 22;
+        handle |= (tag as u32) << 21;
 
         handle
     }

@@ -2,10 +2,15 @@ use ash::vk;
 use std::sync::Arc;
 use std::sync::Mutex;
 
+/// Descriptor handles
+/// 6 | 2 | 3 | 21
+/// Version, DepthFlag, ImportFlag, RenderResourceTag, DescriptorHandle
+
+// Must be representable with 3 bits, otherwise amend how descriptor handles are constructed
 #[derive(Clone, Copy)]
 pub enum RenderResourceTag {
-    UniformBuffer = 0,
-    StorageBuffer = 1,
+    UniformBuffer = 0, // This is tied to binding slot of buffer descriptor set, DO NOT CHANGE!
+    StorageBuffer = 1, // This is tied to binding slot of buffer descriptor set, DO NOT CHANGE!
     StorageImage = 2,
     SampledImage = 3,
     Sampler = 4,
@@ -31,7 +36,8 @@ pub struct Descriptor {
     pub sets: [vk::DescriptorSet; 4],
     pub layouts: [vk::DescriptorSetLayout; 4],
 
-    pub buffer_handle: ResourceTracker,
+    pub ubo_handle: ResourceTracker,
+    pub ssbo_handle: ResourceTracker,
     pub image_handle: ResourceTracker,
 }
 
@@ -45,7 +51,8 @@ impl Descriptor {
             pool,
             sets,
             layouts,
-            buffer_handle: Arc::new(Mutex::new(CountTracker { next: 0 })),
+            ubo_handle: Arc::new(Mutex::new(CountTracker { next: 0 })),
+            ssbo_handle: Arc::new(Mutex::new(CountTracker { next: 0 })),
             image_handle: Arc::new(Mutex::new(CountTracker { next: 0 })),
         }
     }
