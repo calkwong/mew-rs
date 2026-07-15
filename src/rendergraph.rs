@@ -53,7 +53,11 @@ impl<'a> Rendergraph<'a> {
     // TODO: We want to skip import on first frame (verify! may be resource specific) to we still get the initial
     // transition out of UNDEFINED layout.
     pub fn import(&mut self, _name: &'a str, handle: DescriptorHandle) {
-        if self.resource_to_id.insert(handle, self.resource_states.len()).is_some() {
+        if self
+            .resource_to_id
+            .insert(handle, self.resource_states.len())
+            .is_some()
+        {
             panic!("Imported resource is imported more than once");
         }
 
@@ -64,10 +68,24 @@ impl<'a> Rendergraph<'a> {
         });
     }
 
-    // TODO: refactor for root to be determined by resource output instead of using a render pass
+    // TODO: delete if add_root_resource does not present any issues
     pub fn add_root_pass<T>(&mut self, name: &'a str, pass: Pass<'a, T>) {
         self.roots.push(self.dependencies.len());
         self.add_pass(name, pass);
+    }
+
+    // TODO: untested
+    pub fn add_root_resource(&mut self, handle: &DescriptorHandle) {
+        if let Some(resource_id) = self.resource_to_id.get(handle) {
+            let state = &self.resource_states[*resource_id];
+            if let Some(last_write_id) = state.last_write {
+                self.roots.push(last_write_id);
+            } else {
+                panic!("Root resource does not have a producer")
+            }
+        } else {
+            panic!("Resource does not exist");
+        }
     }
 
     // The dependencies list built may contain duplicates, but dfs search ensures
@@ -142,6 +160,8 @@ impl<'a> Rendergraph<'a> {
     }
 
     fn build_execution_groups(&mut self) {
+        assert!(!self.roots.is_empty());
+
         let len = self.dependencies.len();
 
         let mut dependency_levels: Vec<Vec<usize>> = vec![Vec::new(); len];

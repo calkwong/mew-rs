@@ -790,7 +790,7 @@ fn render_loop(renderer: &mut Renderer) {
                 src_id: renderer.framebuffer.depth_index.handle(),
                 dst_id: renderer.framebuffer.depth_pyramid_storage_index.handle(),
             };
-        rdg.add_root_pass(
+        rdg.add_pass(
             "Build hi-z",
             Pass::new_compute()
                 .read_image(
@@ -820,7 +820,7 @@ fn render_loop(renderer: &mut Renderer) {
         };
         let group_count_x = mew::get_group_count(renderer.backend.swapchain.extent.width, 8);
         let group_count_y = mew::get_group_count(renderer.backend.swapchain.extent.height, 8);
-        rdg.add_root_pass(
+        rdg.add_pass(
             "Tonemap",
             Pass::new_compute()
                 .read_image(
@@ -841,6 +841,8 @@ fn render_loop(renderer: &mut Renderer) {
         );
     }
 
+    rdg.add_root_resource(&renderer.framebuffer.swapchain_indices[swapchain_idx]);
+    rdg.add_root_resource(&renderer.framebuffer.depth_pyramid_sample_index);
     rdg.compile();
     rdg.run(device, cmd, renderer.backend.pipeline_layout);
 
