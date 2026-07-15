@@ -25,7 +25,7 @@ pub mod occlusion_renderer;
 pub mod rendergraph;
 pub mod swapchain;
 use descriptors::{
-    DescriptorHandle, RenderResourceTag, allocate_descriptor_handle, get_descriptor_index,
+    DescriptorHandle, RenderResourceTag, allocate_descriptor_handle, get_descriptor_set_index,
 };
 use swapchain::{Swapchain, create_swapchain};
 
@@ -542,7 +542,7 @@ impl Device {
 
         match tag {
             RenderResourceTag::StorageImage => {
-                let index = get_descriptor_index(RenderResourceTag::StorageImage);
+                let index = get_descriptor_set_index(RenderResourceTag::StorageImage);
 
                 let write = vk::WriteDescriptorSet::default()
                     .dst_set(descriptor.sets[index])
@@ -558,7 +558,7 @@ impl Device {
                 }
             }
             RenderResourceTag::SampledImage => {
-                let index = get_descriptor_index(RenderResourceTag::SampledImage);
+                let index = get_descriptor_set_index(RenderResourceTag::SampledImage);
 
                 let write = vk::WriteDescriptorSet::default()
                     .dst_set(descriptor.sets[index])
@@ -591,24 +591,28 @@ impl Device {
             range: vk::WHOLE_SIZE,
         }];
 
-        let handle = match descriptor_type {
-            vk::DescriptorType::UNIFORM_BUFFER => {
-                allocate_descriptor_handle(descriptor, RenderResourceTag::UniformBuffer)
-            }
-            vk::DescriptorType::STORAGE_BUFFER => {
-                allocate_descriptor_handle(descriptor, RenderResourceTag::StorageBuffer)
-            }
+        // UBO & SSBO map to the same index
+        let set = get_descriptor_set_index(RenderResourceTag::StorageBuffer);
+
+        let (handle, binding) = match descriptor_type {
+            vk::DescriptorType::UNIFORM_BUFFER => (
+                allocate_descriptor_handle(descriptor, RenderResourceTag::UniformBuffer),
+                0,
+            ),
+            vk::DescriptorType::STORAGE_BUFFER => (
+                allocate_descriptor_handle(descriptor, RenderResourceTag::StorageBuffer),
+                1,
+            ),
             _ => panic!("Currently support UBO / SSBO only"),
         };
 
-        let tag = handle.tag();
-
+        // let tag = handle.tag();
         // dbg!(handle.handle());
         // dbg!(tag);
 
         let write = [vk::WriteDescriptorSet::default()
-            .dst_set(descriptor.sets[0])
-            .dst_binding(tag as u32) // This is fragile
+            .dst_set(descriptor.sets[set])
+            .dst_binding(binding)
             .descriptor_type(descriptor_type)
             .dst_array_element(handle.handle())
             .buffer_info(&info)
@@ -629,7 +633,7 @@ impl Device {
             .map(|sampler| [vk::DescriptorImageInfo::default().sampler(*sampler)])
             .collect();
 
-        let index = get_descriptor_index(RenderResourceTag::Sampler);
+        let index = get_descriptor_set_index(RenderResourceTag::Sampler);
 
         let set = descriptor.sets[index];
 
@@ -652,6 +656,7 @@ impl Device {
         }
     }
 
+    // TODO: need to manually set tag
     pub fn register_sampled_image(&self, view: vk::ImageView) -> u32 {
         let descriptor = &self.descriptor;
 
@@ -661,7 +666,7 @@ impl Device {
 
         let handle = { descriptor.image_handle.lock().unwrap().add() };
 
-        let index = get_descriptor_index(RenderResourceTag::SampledImage);
+        let index = get_descriptor_set_index(RenderResourceTag::SampledImage);
         let write = vk::WriteDescriptorSet::default()
             .dst_set(descriptor.sets[index])
             .dst_binding(0)
@@ -678,6 +683,7 @@ impl Device {
         handle
     }
 
+    // TODO: need to manually set tag
     pub fn register_image(&self, view: vk::ImageView) -> u32 {
         let descriptor = &self.descriptor;
 
@@ -687,7 +693,7 @@ impl Device {
 
         let handle = { descriptor.image_handle.lock().unwrap().add() };
 
-        let index = get_descriptor_index(RenderResourceTag::StorageImage);
+        let index = get_descriptor_set_index(RenderResourceTag::StorageImage);
         let write = vk::WriteDescriptorSet::default()
             .dst_set(descriptor.sets[index])
             .dst_binding(0)
@@ -701,7 +707,7 @@ impl Device {
             self.device.update_descriptor_sets(&writes, &[]);
         }
 
-        let index = get_descriptor_index(RenderResourceTag::SampledImage);
+        let index = get_descriptor_set_index(RenderResourceTag::SampledImage);
         let write = vk::WriteDescriptorSet::default()
             .dst_set(descriptor.sets[index])
             .dst_binding(0)

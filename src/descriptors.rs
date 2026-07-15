@@ -107,12 +107,11 @@ pub fn allocate_descriptor_handle(
         _ => panic!("Not implemented"),
     };
 
-    // Set handle tag
     handle.set_tag(tag as _);
     handle
 }
 
-pub fn get_descriptor_index(tag: RenderResourceTag) -> usize {
+pub fn get_descriptor_set_index(tag: RenderResourceTag) -> usize {
     match tag {
         RenderResourceTag::UniformBuffer => 0,
         RenderResourceTag::StorageBuffer => 0,
