@@ -7,10 +7,11 @@ use std::{collections::HashMap, marker::PhantomData};
 
 use crate as mew;
 use mew::Image;
+use mew::descriptors::DescriptorHandle;
 
 pub struct Rendergraph<'a> {
-    resource_to_id: HashMap<&'a str, usize>,
-    resource_states: Vec<ResourceState<'a>>,
+    resource_to_id: HashMap<DescriptorHandle, usize>,
+    resource_states: Vec<ResourceState>,
     dependencies: Vec<Vec<usize>>,
     execution_groups: Vec<Vec<usize>>,
     #[allow(clippy::type_complexity)]
@@ -18,11 +19,11 @@ pub struct Rendergraph<'a> {
     images: Vec<vk::Image>,
     depth_image: Option<vk::Image>,
     roots: Vec<usize>,
-    names: Vec<&'a str>,
+    names: Vec<&'a str>, // For debugging
 }
 
-struct ResourceState<'a> {
-    name: &'a str,
+struct ResourceState {
+    handle: DescriptorHandle,
     last_write: Option<usize>,
     reads_since_last_write: Vec<usize>,
 }
@@ -50,7 +51,7 @@ impl<'a> Rendergraph<'a> {
 
     // TODO: refactor for root to be determined by resource output instead of using a render pass
     pub fn add_root_pass<T>(&mut self, name: &'a str, pass: Pass<'a, T>) {
-        self.roots.push( self.dependencies.len());
+        self.roots.push(self.dependencies.len());
         self.add_pass(name, pass);
     }
 
@@ -61,9 +62,9 @@ impl<'a> Rendergraph<'a> {
         let pass_id = self.dependencies.len();
         self.dependencies.push(Vec::new());
 
-        for PassResource { name, image } in &pass.reads {
+        for PassResource { handle, image } in &pass.reads {
             // Record dependencies
-            if let Some(id) = self.resource_to_id.get(name) {
+            if let Some(id) = self.resource_to_id.get(handle) {
                 self.resource_states[*id]
                     .reads_since_last_write
                     .push(pass_id);
@@ -71,30 +72,26 @@ impl<'a> Rendergraph<'a> {
                     self.dependencies[pass_id].push(last_write);
                 }
             } else {
-                self.resource_to_id.insert(name, self.resource_states.len());
+                self.resource_to_id
+                    .insert(*handle, self.resource_states.len());
                 self.resource_states.push(ResourceState {
-                    name,
+                    handle: *handle,
                     last_write: None,
                     reads_since_last_write: vec![pass_id],
                 });
-                if let Some(image_metadata) = image {
-                    match image_metadata.aspect {
-                        vk::ImageAspectFlags::DEPTH => {
-                            self.depth_image = Some(image_metadata.image);
-                        }
-                        vk::ImageAspectFlags::COLOR => {
-                            self.images.push(image_metadata.image);
-                        }
-                        _ => {
-                            panic!("This should not execute!");
-                        }
+                if let Some(image) = *image {
+                    let depth = handle.is_depth();
+                    if depth {
+                        self.depth_image = Some(image);
+                    } else {
+                        self.images.push(image);
                     }
                 }
             }
         }
 
-        for PassResource { name, image } in &pass.writes {
-            if let Some(id) = self.resource_to_id.get(name) {
+        for PassResource { handle, image } in &pass.writes {
+            if let Some(id) = self.resource_to_id.get(handle) {
                 self.resource_states[*id].last_write = Some(pass_id);
 
                 // Record dependencies, skip self to prevent deadlock
@@ -104,23 +101,22 @@ impl<'a> Rendergraph<'a> {
                     }
                 }
             } else {
-                self.resource_to_id.insert(name, self.resource_states.len());
+                self.resource_to_id
+                    .insert(*handle, self.resource_states.len());
                 self.resource_states.push(ResourceState {
-                    name,
+                    handle: *handle,
                     last_write: Some(pass_id),
                     reads_since_last_write: Vec::new(),
                 });
-                if let Some(image_metadata) = image {
-                    match image_metadata.aspect {
-                        vk::ImageAspectFlags::DEPTH => {
-                            self.depth_image = Some(image_metadata.image);
-                        }
-                        vk::ImageAspectFlags::COLOR => {
-                            self.images.push(image_metadata.image);
-                        }
-                        _ => {
-                            panic!("This should not execute!");
-                        }
+                // TODO: possible optimization here if we can verify images for layout transition are only ever
+                // pushed in the reads path
+                if let Some(image) = *image {
+                    println!("this never runs");
+                    let depth = handle.is_depth();
+                    if depth {
+                        self.depth_image = Some(image);
+                    } else {
+                        self.images.push(image);
                     }
                 }
             }
@@ -245,20 +241,14 @@ pub enum RenderPass {
     Graphics(GraphicsPass),
 }
 
-#[derive(Copy, Clone)]
-struct ImageMetadata {
-    image: vk::Image,
-    aspect: vk::ImageAspectFlags,
-}
-
-pub struct PassResource<'a> {
-    name: &'a str,
-    image: Option<ImageMetadata>,
+pub struct PassResource {
+    handle: DescriptorHandle,
+    image: Option<vk::Image>,
 }
 
 pub struct Pass<'a, T> {
-    reads: Vec<PassResource<'a>>,
-    writes: Vec<PassResource<'a>>,
+    reads: Vec<PassResource>,
+    writes: Vec<PassResource>,
     pipeline: vk::Pipeline,
     constants: &'a [u8],
     #[allow(clippy::type_complexity)]
@@ -280,50 +270,55 @@ impl<'a, T> Pass<'a, T> {
         }
     }
 
-    pub fn read_buffer(mut self, name: &'a str) -> Self {
-        self.reads.push(PassResource { name, image: None });
+    pub fn read_buffer(mut self, _name: &'a str, handle: DescriptorHandle) -> Self {
+        self.reads.push(PassResource {
+            handle,
+            image: None,
+        });
         self
     }
 
     // TODO: handle temporal texture ie. TAA History - we don't ever want an image transition for these
-    // If can track resources via handles, we can use some of the bits for metadata as we don't need all 32 bits
-    // The current holdup is buffer addresses being u64
     pub fn read_image(
         mut self,
-        name: &'a str,
+        _name: &'a str,
         image: vk::Image,
-        aspect: vk::ImageAspectFlags,
+        handle: DescriptorHandle,
     ) -> Self {
         self.reads.push(PassResource {
-            name,
-            image: Some(ImageMetadata { image, aspect }),
+            handle,
+            image: Some(image),
         });
         self
     }
 
     // This implicitly handles WAW
     // TODO: if we automate with fine grained barriers, reevaluate how our handling of WAW could affect access_mask; for a gigabarrier this is fine
-    pub fn write_buffer(mut self, name: &'a str) -> Self {
-        self.writes.push(PassResource { name, image: None });
-        self.reads.push(PassResource { name, image: None });
+    pub fn write_buffer(mut self, _name: &'a str, handle: DescriptorHandle) -> Self {
+        self.writes.push(PassResource {
+            handle,
+            image: None,
+        });
+        self.reads.push(PassResource {
+            handle,
+            image: None,
+        });
         self
     }
 
     pub fn write_image(
         mut self,
-        name: &'a str,
+        _name: &'a str,
         image: vk::Image,
-        aspect: vk::ImageAspectFlags,
+        handle: DescriptorHandle,
     ) -> Self {
-        let image_metadata = ImageMetadata { image, aspect };
-
         self.writes.push(PassResource {
-            name,
-            image: Some(image_metadata),
+            handle,
+            image: Some(image),
         });
         self.reads.push(PassResource {
-            name,
-            image: Some(image_metadata),
+            handle,
+            image: Some(image),
         });
 
         self
@@ -391,6 +386,7 @@ impl<'a> Pass<'a, GraphicsPass> {
         mut self,
         name: &'a str,
         image: &Image,
+        handle: DescriptorHandle,
         load_op: vk::AttachmentLoadOp,
     ) -> Self {
         if let RenderPass::Graphics(data) = &mut self.render_pass {
@@ -399,7 +395,7 @@ impl<'a> Pass<'a, GraphicsPass> {
                 load_op,
             });
         }
-        self = self.write_image(name, image.image, vk::ImageAspectFlags::COLOR);
+        self = self.write_image(name, image.image, handle);
         self
     }
 
@@ -407,6 +403,7 @@ impl<'a> Pass<'a, GraphicsPass> {
         mut self,
         name: &'a str,
         image: &Image,
+        handle: DescriptorHandle,
         load_op: vk::AttachmentLoadOp,
     ) -> Self {
         if let RenderPass::Graphics(data) = &mut self.render_pass {
@@ -415,7 +412,9 @@ impl<'a> Pass<'a, GraphicsPass> {
                 load_op,
             });
         }
-        self = self.write_image(name, image.image, vk::ImageAspectFlags::DEPTH);
+
+        let updated_handle = DescriptorHandle(handle.0 | DescriptorHandle::DEPTH_MASK);
+        self = self.write_image(name, image.image, updated_handle);
         self
     }
 

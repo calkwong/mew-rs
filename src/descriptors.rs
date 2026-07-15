@@ -36,13 +36,14 @@ impl CountTracker {
 
 pub type ResourceTracker = Arc<Mutex<CountTracker>>;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct DescriptorHandle(pub u32);
 
 impl DescriptorHandle {
     pub const HANDLE_BITS: u32 = 22;
     pub const HANDLE_MASK: u32 = (1u32 << Self::HANDLE_BITS) - 1;
     pub const TAG_MASK: u32 = ((1u32 << 3) - 1) << Self::HANDLE_BITS;
+    pub const DEPTH_MASK: u32 = (1u32 << 25);
 
     pub fn handle(&self) -> u32 {
         self.0 & Self::HANDLE_MASK
@@ -54,6 +55,14 @@ impl DescriptorHandle {
 
     pub fn set_tag(&mut self, tag: RenderResourceTag) {
         self.0 |= (tag as u32) << Self::HANDLE_BITS;
+    }
+
+    pub fn is_depth(&self) -> bool {
+        (self.0 & Self::DEPTH_MASK) == Self::DEPTH_MASK
+    }
+
+    pub fn depth(&mut self) -> Self {
+        Self(self.0 | Self::DEPTH_MASK)
     }
 }
 

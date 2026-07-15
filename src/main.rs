@@ -121,7 +121,7 @@ impl Renderer {
             vk::ImageAspectFlags::DEPTH,
             false,
         );
-        let depth_index = backend.register_image(depth_image.view);
+        let depth_index = backend.register_image(depth_image.view).depth();
 
         let swapchain_indices: Vec<DescriptorHandle> = backend
             .swapchain
@@ -713,8 +713,8 @@ fn render_loop(renderer: &mut Renderer) {
         rdg.add_pass(
             "Culling",
             Pass::new_compute()
-                .write_buffer("draw_indirect")
-                .write_buffer("dispatch")
+                .write_buffer("draw_indirect", renderer.draw_indirect_buffer.handle)
+                .write_buffer("dispatch", renderer.dispatch_buffer.handle)
                 .constants(mew::push_constants_as_bytes(&renderer.occlusion_renderer.cull_constants))
                 .pipeline(renderer.cull_pipeline)
                 .dispatch(group_count_x, 1, 1),
@@ -741,16 +741,18 @@ fn render_loop(renderer: &mut Renderer) {
         rdg.add_pass(
             "Rasterization",
             Pass::new_graphics()
-                .read_buffer("draw_indirect")
-                .read_buffer("dispatch")
+                .read_buffer("draw_indirect", renderer.draw_indirect_buffer.handle)
+                .read_buffer("dispatch", renderer.dispatch_buffer.handle)
                 .render_target(
                     "draw",
                     &renderer.framebuffer.draw_image,
+                    renderer.framebuffer.draw_index,
                     vk::AttachmentLoadOp::CLEAR,
                 )
                 .depth_target(
                     "depth",
                     &renderer.framebuffer.depth_image,
+                    renderer.framebuffer.depth_index,
                     vk::AttachmentLoadOp::CLEAR,
                 )
                 .constants(mew::push_constants_as_bytes(&renderer.occlusion_renderer.render_constants))
@@ -794,14 +796,14 @@ fn render_loop(renderer: &mut Renderer) {
                 .read_image(
                     "depth",
                     renderer.framebuffer.depth_image.image,
-                    vk::ImageAspectFlags::DEPTH,
+                    renderer.framebuffer.depth_index,
                 )
                 .write_image(
                     "hiz",
                     renderer.framebuffer.depth_pyramid.image,
-                    vk::ImageAspectFlags::COLOR,
+                    renderer.framebuffer.depth_pyramid_sample_index,
                 )
-                .write_buffer("spd")
+                .write_buffer("spd", renderer.spd_buffer.handle)
                 .constants(mew::push_constants_as_bytes(
                     &renderer.occlusion_renderer.depth_pyramid_constants,
                 ))
@@ -824,12 +826,12 @@ fn render_loop(renderer: &mut Renderer) {
                 .read_image(
                     "draw",
                     renderer.framebuffer.draw_image.image,
-                    vk::ImageAspectFlags::COLOR,
+                    renderer.framebuffer.draw_index,
                 )
                 .write_image(
                     "swapchain",
                     renderer.backend.swapchain.images[swapchain_idx],
-                    vk::ImageAspectFlags::COLOR,
+                    renderer.framebuffer.swapchain_indices[swapchain_idx],
                 )
                 .constants(mew::push_constants_as_bytes(
                     &renderer.occlusion_renderer.tonemap_constants,
