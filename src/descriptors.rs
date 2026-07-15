@@ -6,6 +6,7 @@ use std::sync::Mutex;
 // 6 | 1 | 1 | 2 | 22
 // Version, DepthFlag, ImportFlag, RenderResourceTag, DescriptorHandle
 // This assumes we track Storage/Sampled images as the same resource and never track UBO in our rendergraph
+// TODO: we should validate handles
 
 pub enum RenderResourceTag {
     Buffer,
@@ -35,12 +36,13 @@ impl CountTracker {
 
 pub type ResourceTracker = Arc<Mutex<CountTracker>>;
 
+#[derive(Copy, Clone)]
 pub struct DescriptorHandle(pub u32);
 
 impl DescriptorHandle {
-    const HANDLE_BITS: u32 = 22;
-    const HANDLE_MASK: u32 = (1u32 << Self::HANDLE_BITS) - 1;
-    const TAG_MASK: u32 = ((1u32 << 3) - 1) << Self::HANDLE_BITS;
+    pub const HANDLE_BITS: u32 = 22;
+    pub const HANDLE_MASK: u32 = (1u32 << Self::HANDLE_BITS) - 1;
+    pub const TAG_MASK: u32 = ((1u32 << 3) - 1) << Self::HANDLE_BITS;
 
     pub fn handle(&self) -> u32 {
         self.0 & Self::HANDLE_MASK

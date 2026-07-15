@@ -1,5 +1,6 @@
 use ash::vk::{self, Fence};
 use glam::{Vec2, Vec4Swizzles};
+use mew::descriptors::DescriptorHandle;
 use mew::loader::load_gltf;
 use mew::rendergraph::{Pass, Rendergraph};
 use mew::swapchain::recreate_swapchain;
@@ -54,11 +55,11 @@ struct Framebuffer {
     draw_image: mew::Image,
     depth_image: mew::Image,
     depth_pyramid: mew::Image,
-    draw_index: u32,
-    depth_index: u32,
-    swapchain_indices: Vec<u32>,
-    depth_pyramid_sample_index: u32,
-    depth_pyramid_storage_index: u32,
+    draw_index: DescriptorHandle,
+    depth_index: DescriptorHandle,
+    swapchain_indices: Vec<DescriptorHandle>,
+    depth_pyramid_sample_index: DescriptorHandle,
+    depth_pyramid_storage_index: DescriptorHandle,
     depth_pyramid_views: [vk::ImageView; 11],
 }
 
@@ -122,7 +123,7 @@ impl Renderer {
         );
         let depth_index = backend.register_image(depth_image.view);
 
-        let swapchain_indices: Vec<u32> = backend
+        let swapchain_indices: Vec<DescriptorHandle> = backend
             .swapchain
             .views
             .iter()
@@ -145,7 +146,7 @@ impl Renderer {
         );
         let depth_pyramid_sample_index = backend.register_image(depth_pyramid.view);
         let max_mip_level = hiz_width.max(hiz_height).ilog2();
-        let mut depth_pyramid_storage_index = 0;
+        let mut depth_pyramid_storage_index = DescriptorHandle(u32::MAX);
         let depth_pyramid_views = std::array::from_fn(|i| {
             let view = mew::create_image_view(
                 device,
@@ -784,8 +785,8 @@ fn render_loop(renderer: &mut Renderer) {
                 rcp_resolution: Vec2::ONE / Vec2::new(width as _, height as _),
                 mips: hiz_width.max(hiz_height).ilog2() + 1,
                 num_wgs: group_count_x * group_count_y,
-                src_id: renderer.framebuffer.depth_index,
-                dst_id: renderer.framebuffer.depth_pyramid_storage_index,
+                src_id: renderer.framebuffer.depth_index.handle(),
+                dst_id: renderer.framebuffer.depth_pyramid_storage_index.handle(),
             };
         rdg.add_root_pass(
             "Build hi-z",
@@ -812,8 +813,8 @@ fn render_loop(renderer: &mut Renderer) {
     // Pass 3 - Copy to swapchain
     {
         renderer.occlusion_renderer.tonemap_constants = occlusion_renderer::TonemapConstants {
-            src_id: renderer.framebuffer.draw_index,
-            dst_id: renderer.framebuffer.swapchain_indices[swapchain_idx],
+            src_id: renderer.framebuffer.draw_index.handle(),
+            dst_id: renderer.framebuffer.swapchain_indices[swapchain_idx].handle(),
         };
         let group_count_x = mew::get_group_count(renderer.backend.swapchain.extent.width, 8);
         let group_count_y = mew::get_group_count(renderer.backend.swapchain.extent.height, 8);
@@ -1034,8 +1035,10 @@ fn on_swapchain_resize(renderer: &mut Renderer) {
     // Only updating relevant descriptors, which is hiz_mips count
     (0..max_mip_level + 1).for_each(|i| {
         let view = &renderer.framebuffer.depth_pyramid_views[i as usize];
+        let descriptor_handle = renderer.framebuffer.depth_pyramid_storage_index.handle() + i;
+        let handle = DescriptorHandle(DescriptorHandle::TAG_MASK | descriptor_handle);
         renderer.backend.update_image_descriptor(
-            i + renderer.framebuffer.depth_pyramid_storage_index,
+            handle,
             *view,
             true,
         );

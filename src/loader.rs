@@ -293,7 +293,7 @@ pub fn load_gltf(
     // This is necessary if we load multiple gltf
     let descriptor_handles: Vec<u32> = images
         .iter()
-        .map(|img| device.register_sampled_image(img.view))
+        .map(|img| device.register_sampled_image(img.view).handle())
         .collect();
 
     let mut materials: Vec<MaterialData> = Vec::new();

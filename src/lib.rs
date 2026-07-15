@@ -526,10 +526,9 @@ impl Device {
         }
     }
 
-    // TODO: change to descriptorHandle
-    // TODO: extract only first 21 bits
-    pub fn update_image_descriptor(&self, handle: u32, view: vk::ImageView, storage_only: bool) {
+    pub fn update_image_descriptor(&self, handle: DescriptorHandle, view: vk::ImageView, storage_only: bool) {
         let descriptor = &self.descriptor;
+        let descriptor_handle = handle.handle();
 
         let info = [vk::DescriptorImageInfo::default()
             .image_layout(vk::ImageLayout::GENERAL)
@@ -540,7 +539,7 @@ impl Device {
                 .dst_set(descriptor.sets[DescriptorSetMapping::StorageImage as usize])
                 .dst_binding(0)
                 .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
-                .dst_array_element(handle)
+                .dst_array_element(descriptor_handle)
                 .image_info(&info)
                 .descriptor_count(1)];
 
@@ -553,14 +552,14 @@ impl Device {
                     .dst_set(descriptor.sets[DescriptorSetMapping::SampledImage as usize])
                     .dst_binding(0)
                     .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
-                    .dst_array_element(handle)
+                    .dst_array_element(descriptor_handle)
                     .image_info(&info)
                     .descriptor_count(1),
                 vk::WriteDescriptorSet::default()
                     .dst_set(descriptor.sets[DescriptorSetMapping::StorageImage as usize])
                     .dst_binding(0)
                     .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
-                    .dst_array_element(handle)
+                    .dst_array_element(descriptor_handle)
                     .image_info(&info)
                     .descriptor_count(1),
             ];
@@ -645,7 +644,7 @@ impl Device {
         }
     }
 
-    pub fn register_sampled_image(&self, view: vk::ImageView) -> u32 {
+    pub fn register_sampled_image(&self, view: vk::ImageView) -> DescriptorHandle {
         let descriptor = &self.descriptor;
 
         let info = [vk::DescriptorImageInfo::default()
@@ -668,10 +667,10 @@ impl Device {
             self.device.update_descriptor_sets(&writes, &[]);
         }
 
-        descriptor_handle
+        handle
     }
 
-    pub fn register_image(&self, view: vk::ImageView) -> u32 {
+    pub fn register_image(&self, view: vk::ImageView) -> DescriptorHandle {
         let descriptor = &self.descriptor;
 
         let info = [vk::DescriptorImageInfo::default()
@@ -702,7 +701,7 @@ impl Device {
             self.device.update_descriptor_sets(&writes, &[]);
         }
 
-        descriptor_handle
+        handle
     }
 }
 
