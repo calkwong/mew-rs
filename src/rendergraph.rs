@@ -90,7 +90,7 @@ impl<'a> Rendergraph<'a> {
             }
         }
 
-        for PassResource { handle, image } in &pass.writes {
+        for PassResource { handle, image: _image } in &pass.writes {
             if let Some(id) = self.resource_to_id.get(handle) {
                 self.resource_states[*id].last_write = Some(pass_id);
 
@@ -100,7 +100,7 @@ impl<'a> Rendergraph<'a> {
                         self.dependencies[pass_id].push(*read);
                     }
                 }
-            } else {
+            } /* else {
                 self.resource_to_id
                     .insert(*handle, self.resource_states.len());
                 self.resource_states.push(ResourceState {
@@ -108,10 +108,7 @@ impl<'a> Rendergraph<'a> {
                     last_write: Some(pass_id),
                     reads_since_last_write: Vec::new(),
                 });
-                // TODO: possible optimization here if we can verify images for layout transition are only ever
-                // pushed in the reads path
                 if let Some(image) = *image {
-                    println!("this never runs");
                     let depth = handle.is_depth();
                     if depth {
                         self.depth_image = Some(image);
@@ -119,7 +116,7 @@ impl<'a> Rendergraph<'a> {
                         self.images.push(image);
                     }
                 }
-            }
+            } */
         }
 
         self.executes.push(pass.execute);
