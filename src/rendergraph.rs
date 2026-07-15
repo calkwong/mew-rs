@@ -49,6 +49,21 @@ impl<'a> Rendergraph<'a> {
         }
     }
 
+    // Handles temporal resources.
+    // TODO: We want to skip import on first frame (verify! may be resource specific) to we still get the initial
+    // transition out of UNDEFINED layout.
+    pub fn import(&mut self, _name: &'a str, handle: DescriptorHandle) {
+        if self.resource_to_id.insert(handle, self.resource_states.len()).is_some() {
+            panic!("Imported resource is imported more than once");
+        }
+
+        self.resource_states.push(ResourceState {
+            handle,
+            last_write: None,
+            reads_since_last_write: Vec::new(),
+        });
+    }
+
     // TODO: refactor for root to be determined by resource output instead of using a render pass
     pub fn add_root_pass<T>(&mut self, name: &'a str, pass: Pass<'a, T>) {
         self.roots.push(self.dependencies.len());
@@ -56,14 +71,14 @@ impl<'a> Rendergraph<'a> {
     }
 
     // The dependencies list built may contain duplicates, but dfs search ensures
-    // we don't traverse the children of a node we have already visited via memoization
+    // we don't traverse the children of a node we have already visited via memoization.
+    // If a texture resource is imported into the graph, it will not be pushed onto list of images for barrier transition.
     pub fn add_pass<T>(&mut self, name: &'a str, pass: Pass<'a, T>) {
         self.names.push(name);
         let pass_id = self.dependencies.len();
         self.dependencies.push(Vec::new());
 
         for PassResource { handle, image } in &pass.reads {
-            // Record dependencies
             if let Some(id) = self.resource_to_id.get(handle) {
                 self.resource_states[*id]
                     .reads_since_last_write
@@ -90,7 +105,11 @@ impl<'a> Rendergraph<'a> {
             }
         }
 
-        for PassResource { handle, image: _image } in &pass.writes {
+        for PassResource {
+            handle,
+            image: _image,
+        } in &pass.writes
+        {
             if let Some(id) = self.resource_to_id.get(handle) {
                 self.resource_states[*id].last_write = Some(pass_id);
 
@@ -101,21 +120,21 @@ impl<'a> Rendergraph<'a> {
                     }
                 }
             } /* else {
-                self.resource_to_id
-                    .insert(*handle, self.resource_states.len());
-                self.resource_states.push(ResourceState {
-                    handle: *handle,
-                    last_write: Some(pass_id),
-                    reads_since_last_write: Vec::new(),
-                });
-                if let Some(image) = *image {
-                    let depth = handle.is_depth();
-                    if depth {
-                        self.depth_image = Some(image);
-                    } else {
-                        self.images.push(image);
-                    }
-                }
+            self.resource_to_id
+            .insert(*handle, self.resource_states.len());
+            self.resource_states.push(ResourceState {
+            handle: *handle,
+            last_write: Some(pass_id),
+            reads_since_last_write: Vec::new(),
+            });
+            if let Some(image) = *image {
+            let depth = handle.is_depth();
+            if depth {
+            self.depth_image = Some(image);
+            } else {
+            self.images.push(image);
+            }
+            }
             } */
         }
 
@@ -207,6 +226,7 @@ impl<'a> Rendergraph<'a> {
             )
         }
 
+        // dbg!(image_memory_barriers.len());
         image_memory_barriers
     }
 
@@ -275,7 +295,6 @@ impl<'a, T> Pass<'a, T> {
         self
     }
 
-    // TODO: handle temporal texture ie. TAA History - we don't ever want an image transition for these
     pub fn read_image(
         mut self,
         _name: &'a str,
