@@ -292,7 +292,7 @@ impl Renderer {
             materials,
         );
 
-        let draw_indirect_buffer = mew::create_buffer(
+        let mut draw_indirect_buffer = mew::create_buffer(
             device,
             allocator,
             gpu_allocator::MemoryLocation::GpuOnly,
@@ -302,8 +302,10 @@ impl Renderer {
             // (scene.renderables.len() * std::mem::size_of::<vk::DrawIndexedIndirectCommand>())
             (instances.len() * std::mem::size_of::<vk::DrawIndexedIndirectCommand>()) as u64,
         );
+        // TODO: get a handle but don't actually register into descriptor?
+        draw_indirect_buffer.handle = backend.register_buffer(draw_indirect_buffer.buffer, vk::DescriptorType::STORAGE_BUFFER);
 
-        let dispatch_buffer = mew::create_buffer(
+        let mut dispatch_buffer = mew::create_buffer(
             device,
             allocator,
             gpu_allocator::MemoryLocation::GpuOnly,
@@ -313,14 +315,18 @@ impl Renderer {
                 | vk::BufferUsageFlags::TRANSFER_DST,
             (3 * std::mem::size_of::<u32>()) as u64,
         );
+        dispatch_buffer.handle = backend.register_buffer(dispatch_buffer.buffer, vk::DescriptorType::STORAGE_BUFFER);
 
-        let spd_buffer = mew::create_buffer(
+        let mut spd_buffer = mew::create_buffer(
             device,
             allocator,
             gpu_allocator::MemoryLocation::GpuOnly,
             vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS | vk::BufferUsageFlags::STORAGE_BUFFER,
             (std::mem::size_of::<u32>()) as u64,
         );
+        spd_buffer.handle = backend.register_buffer(spd_buffer.buffer, vk::DescriptorType::STORAGE_BUFFER);
+
+        dbg!(draw_indirect_buffer.handle & ((1 << 22) - 1));
 
         Self {
             window,
@@ -1002,12 +1008,12 @@ fn on_swapchain_resize(renderer: &mut Renderer) {
     renderer.backend.update_image_descriptor(
         renderer.framebuffer.draw_index,
         renderer.framebuffer.draw_image.view,
-        RenderResourceTag::Storage,
+        RenderResourceTag::StorageImage,
     );
     renderer.backend.update_image_descriptor(
         renderer.framebuffer.depth_index,
         renderer.framebuffer.depth_image.view,
-        RenderResourceTag::Sampled,
+        RenderResourceTag::SampledImage,
     );
 
     for (index, view) in renderer
@@ -1018,13 +1024,13 @@ fn on_swapchain_resize(renderer: &mut Renderer) {
     {
         renderer
             .backend
-            .update_image_descriptor(*index, *view, RenderResourceTag::Storage);
+            .update_image_descriptor(*index, *view, RenderResourceTag::StorageImage);
     }
 
     renderer.backend.update_image_descriptor(
         renderer.framebuffer.depth_pyramid_sample_index,
         renderer.framebuffer.depth_pyramid.view,
-        RenderResourceTag::Sampled,
+        RenderResourceTag::SampledImage,
     );
 
     // TODO: verify this is correct
@@ -1034,7 +1040,7 @@ fn on_swapchain_resize(renderer: &mut Renderer) {
         renderer.backend.update_image_descriptor(
             i + renderer.framebuffer.depth_pyramid_storage_index,
             *view,
-            RenderResourceTag::Storage,
+            RenderResourceTag::StorageImage,
         );
     });
 }

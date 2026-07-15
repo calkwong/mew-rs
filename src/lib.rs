@@ -18,10 +18,10 @@ use winit::{
     window::Window,
 };
 
-pub mod occlusion_renderer;
 pub mod camera;
 pub mod descriptors;
 pub mod loader;
+pub mod occlusion_renderer;
 pub mod rendergraph;
 pub mod swapchain;
 use descriptors::{RenderResourceTag, get_descriptor_index};
@@ -51,6 +51,7 @@ pub struct Image {
 pub struct Buffer {
     pub buffer: vk::Buffer,
     pub address: vk::DeviceAddress,
+    pub handle: u32,
     pub allocation: Allocation,
     pub size: vk::DeviceSize,
 }
@@ -305,11 +306,11 @@ impl Device {
         let pool_size = [
             vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::UNIFORM_BUFFER,
-                descriptor_count: 3,
+                descriptor_count: 10,
             },
             vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::STORAGE_BUFFER,
-                descriptor_count: 3,
+                descriptor_count: 10,
             },
             vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::STORAGE_IMAGE,
@@ -325,48 +326,62 @@ impl Device {
             },
         ];
         let descriptor_pool = descriptors::create_descriptor_pool(&device, &pool_size);
-        let buffer_binding = vk::DescriptorSetLayoutBinding::default()
-            .binding(0)
-            .descriptor_count(FRAMES_IN_FLIGHT as u32)
-            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-            .stage_flags(vk::ShaderStageFlags::ALL);
+        let buffer_binding = [
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(0)
+                .descriptor_count(FRAMES_IN_FLIGHT as u32)
+                .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+                .stage_flags(vk::ShaderStageFlags::ALL),
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(1)
+                .descriptor_count(10)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .stage_flags(vk::ShaderStageFlags::ALL),
+        ];
 
-        let storage_image_binding = vk::DescriptorSetLayoutBinding::default()
+        let storage_image_binding = [vk::DescriptorSetLayoutBinding::default()
             .binding(0)
             .descriptor_count(300)
             .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
-            .stage_flags(vk::ShaderStageFlags::ALL);
+            .stage_flags(vk::ShaderStageFlags::ALL)];
 
-        let sample_image_binding = vk::DescriptorSetLayoutBinding::default()
+        let sample_image_binding = [vk::DescriptorSetLayoutBinding::default()
             .binding(0)
             .descriptor_count(300)
             .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
-            .stage_flags(vk::ShaderStageFlags::ALL);
+            .stage_flags(vk::ShaderStageFlags::ALL)];
 
-        let sampler_binding = vk::DescriptorSetLayoutBinding::default()
+        let sampler_binding = [vk::DescriptorSetLayoutBinding::default()
             .binding(0)
             .descriptor_count(5)
             .descriptor_type(vk::DescriptorType::SAMPLER)
-            .stage_flags(vk::ShaderStageFlags::ALL);
+            .stage_flags(vk::ShaderStageFlags::ALL)];
 
         // setup for bindless descriptors
-        let buffer_descriptor_layout =
-            descriptors::create_descriptor_layouts(&device, buffer_binding, &[]);
+        let buffer_descriptor_layout = descriptors::create_descriptor_layouts(
+            &device,
+            &buffer_binding,
+            &[
+                vk::DescriptorBindingFlags::PARTIALLY_BOUND,
+                vk::DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT
+                    | vk::DescriptorBindingFlags::PARTIALLY_BOUND,
+            ],
+        );
         let storage_descriptor_layout = descriptors::create_descriptor_layouts(
             &device,
-            storage_image_binding,
+            &storage_image_binding,
             &[vk::DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT
                 | vk::DescriptorBindingFlags::PARTIALLY_BOUND],
         );
         let sample_descriptor_layout = descriptors::create_descriptor_layouts(
             &device,
-            sample_image_binding,
+            &sample_image_binding,
             &[vk::DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT
                 | vk::DescriptorBindingFlags::PARTIALLY_BOUND],
         );
         let sampler_descriptor_layout = descriptors::create_descriptor_layouts(
             &device,
-            sampler_binding,
+            &sampler_binding,
             &[vk::DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT
                 | vk::DescriptorBindingFlags::PARTIALLY_BOUND],
         );
@@ -375,7 +390,7 @@ impl Device {
             &device,
             descriptor_pool,
             buffer_descriptor_layout,
-            3,
+            10, // TODO: verify this is specifying upper bound of variable count
         );
         let storage_descriptor = descriptors::create_descriptor_sets(
             &device,
@@ -509,6 +524,8 @@ impl Device {
         }
     }
 
+    // TODO: no longer need tag because we share handle?
+    // TODO: extract only first 22 bits
     pub fn update_image_descriptor(
         &self,
         handle: u32,
@@ -522,8 +539,8 @@ impl Device {
             .image_view(view)];
 
         match tag {
-            RenderResourceTag::Storage => {
-                let index = get_descriptor_index(RenderResourceTag::Storage);
+            RenderResourceTag::StorageImage => {
+                let index = get_descriptor_index(RenderResourceTag::StorageImage);
 
                 let write = vk::WriteDescriptorSet::default()
                     .dst_set(descriptor.sets[index])
@@ -538,8 +555,8 @@ impl Device {
                     self.device.update_descriptor_sets(&writes, &[]);
                 }
             }
-            RenderResourceTag::Sampled => {
-                let index = get_descriptor_index(RenderResourceTag::Sampled);
+            RenderResourceTag::SampledImage => {
+                let index = get_descriptor_index(RenderResourceTag::SampledImage);
 
                 let write = vk::WriteDescriptorSet::default()
                     .dst_set(descriptor.sets[index])
@@ -558,7 +575,47 @@ impl Device {
         }
     }
 
-    // TODO: register buffer
+    // TODO: UBO is binding 0, SSBO binding 1, how do we allocate the correct descriptor handle?
+    pub fn register_buffer(
+        &self,
+        buffer: ash::vk::Buffer,
+        descriptor_type: vk::DescriptorType,
+    ) -> u32 {
+        let descriptor = &self.descriptor;
+
+        let info: [vk::DescriptorBufferInfo; 1] = [vk::DescriptorBufferInfo {
+            buffer,
+            offset: 0,
+            // TODO: check mew-engine if this should be WHOLE_SIZE or allocated size
+            range: vk::WHOLE_SIZE,
+        }];
+
+        let mut handle = { descriptor.buffer_handle.lock().unwrap().add() };
+        let tag = match descriptor_type {
+            vk::DescriptorType::UNIFORM_BUFFER => RenderResourceTag::UniformBuffer,
+            vk::DescriptorType::STORAGE_BUFFER => RenderResourceTag::StorageBuffer,
+            _ => panic!("Not supported/implemented"),
+        };
+
+        let index = get_descriptor_index(tag);
+
+        let write = [vk::WriteDescriptorSet::default()
+            .dst_set(descriptor.sets[index])
+            .dst_binding(tag as _) // This is fragile
+            .descriptor_type(descriptor_type)
+            .dst_array_element(handle)
+            .buffer_info(&info)
+            .descriptor_count(1)];
+
+        unsafe {
+            self.device.update_descriptor_sets(&write, &[]);
+        }
+
+        // Set resource type
+        handle |= (tag as u32) << 22;
+
+        handle
+    }
 
     pub fn register_samplers(&self, samplers: &[vk::Sampler]) {
         let descriptor = &self.descriptor;
@@ -600,7 +657,7 @@ impl Device {
 
         let handle = { descriptor.image_handle.lock().unwrap().add() };
 
-        let index = get_descriptor_index(RenderResourceTag::Sampled);
+        let index = get_descriptor_index(RenderResourceTag::SampledImage);
         let write = vk::WriteDescriptorSet::default()
             .dst_set(descriptor.sets[index])
             .dst_binding(0)
@@ -626,7 +683,7 @@ impl Device {
 
         let handle = { descriptor.image_handle.lock().unwrap().add() };
 
-        let index = get_descriptor_index(RenderResourceTag::Storage);
+        let index = get_descriptor_index(RenderResourceTag::StorageImage);
         let write = vk::WriteDescriptorSet::default()
             .dst_set(descriptor.sets[index])
             .dst_binding(0)
@@ -640,7 +697,7 @@ impl Device {
             self.device.update_descriptor_sets(&writes, &[]);
         }
 
-        let index = get_descriptor_index(RenderResourceTag::Sampled);
+        let index = get_descriptor_index(RenderResourceTag::SampledImage);
         let write = vk::WriteDescriptorSet::default()
             .dst_set(descriptor.sets[index])
             .dst_binding(0)
@@ -896,6 +953,7 @@ pub fn create_buffer(
 
     Buffer {
         buffer,
+        handle: u32::MAX,
         address: get_buffer_address(device, buffer),
         allocation,
         size,

@@ -2,11 +2,13 @@ use ash::vk;
 use std::sync::Arc;
 use std::sync::Mutex;
 
+#[derive(Clone, Copy)]
 pub enum RenderResourceTag {
-    Buffer,
-    Storage,
-    Sampled,
-    Sampler,
+    UniformBuffer = 0,
+    StorageBuffer = 1,
+    StorageImage = 2,
+    SampledImage = 3,
+    Sampler = 4,
 }
 
 /// Handle recycling not implemented
@@ -22,14 +24,15 @@ impl CountTracker {
     }
 }
 
-pub type ImageTracker = Arc<Mutex<CountTracker>>;
+pub type ResourceTracker = Arc<Mutex<CountTracker>>;
 
 pub struct Descriptor {
     pub pool: vk::DescriptorPool,
     pub sets: [vk::DescriptorSet; 4],
     pub layouts: [vk::DescriptorSetLayout; 4],
 
-    pub image_handle: ImageTracker,
+    pub buffer_handle: ResourceTracker,
+    pub image_handle: ResourceTracker,
 }
 
 impl Descriptor {
@@ -42,6 +45,7 @@ impl Descriptor {
             pool,
             sets,
             layouts,
+            buffer_handle: Arc::new(Mutex::new(CountTracker { next: 0 })),
             image_handle: Arc::new(Mutex::new(CountTracker { next: 0 })),
         }
     }
@@ -58,9 +62,10 @@ impl Descriptor {
 
 pub fn get_descriptor_index(tag: RenderResourceTag) -> usize {
     match tag {
-        RenderResourceTag::Buffer => 0,
-        RenderResourceTag::Storage => 1,
-        RenderResourceTag::Sampled => 2,
+        RenderResourceTag::UniformBuffer => 0,
+        RenderResourceTag::StorageBuffer => 0,
+        RenderResourceTag::StorageImage => 1,
+        RenderResourceTag::SampledImage => 2,
         RenderResourceTag::Sampler => 3,
     }
 }
@@ -82,17 +87,15 @@ pub fn create_descriptor_pool(
 
 pub fn create_descriptor_layouts(
     device: &ash::Device,
-    binding: vk::DescriptorSetLayoutBinding,
+    binding: &[vk::DescriptorSetLayoutBinding],
     binding_flags: &[vk::DescriptorBindingFlags],
 ) -> vk::DescriptorSetLayout {
-    let binding = [binding];
-
     let mut binding_flags_info =
         vk::DescriptorSetLayoutBindingFlagsCreateInfo::default().binding_flags(binding_flags);
 
     let layout_info = vk::DescriptorSetLayoutCreateInfo::default()
         .push_next(&mut binding_flags_info)
-        .bindings(&binding);
+        .bindings(binding);
 
     unsafe {
         device
