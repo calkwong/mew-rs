@@ -31,6 +31,25 @@ impl CountTracker {
 
 pub type ResourceTracker = Arc<Mutex<CountTracker>>;
 
+pub struct DescriptorHandle(pub u32);
+
+impl DescriptorHandle {
+    const HANDLE_MASK: u32 = (1u32 << 21) - 1;
+    const TAG_MASK: u32 = ((1u32 << 3) - 1) << 21;
+
+    pub fn handle(&self) -> u32 {
+        self.0 & Self::HANDLE_MASK
+    }
+
+    pub fn tag(&self) -> u32 {
+        (self.0 & Self::TAG_MASK) >> 21
+    }
+
+    pub fn set_tag(&mut self, tag: RenderResourceTag) {
+        self.0 |= (tag as u32) << 21;
+    }
+}
+
 pub struct Descriptor {
     pub pool: vk::DescriptorPool,
     pub sets: [vk::DescriptorSet; 4],
@@ -65,6 +84,32 @@ impl Descriptor {
             }
         }
     }
+}
+
+// TODO: possibly move into backend?
+pub fn allocate_descriptor_handle(
+    descriptor: &Descriptor,
+    tag: RenderResourceTag,
+) -> DescriptorHandle {
+    let mut handle: DescriptorHandle = match tag {
+        RenderResourceTag::UniformBuffer => {
+            DescriptorHandle(descriptor.ubo_handle.lock().unwrap().add())
+        }
+        RenderResourceTag::StorageBuffer => {
+            DescriptorHandle(descriptor.ssbo_handle.lock().unwrap().add())
+        }
+        RenderResourceTag::SampledImage => {
+            DescriptorHandle(descriptor.image_handle.lock().unwrap().add())
+        }
+        RenderResourceTag::StorageImage => {
+            DescriptorHandle(descriptor.image_handle.lock().unwrap().add())
+        }
+        _ => panic!("Not implemented"),
+    };
+
+    // Set handle tag
+    handle.set_tag(tag as _);
+    handle
 }
 
 pub fn get_descriptor_index(tag: RenderResourceTag) -> usize {

@@ -24,7 +24,9 @@ pub mod loader;
 pub mod occlusion_renderer;
 pub mod rendergraph;
 pub mod swapchain;
-use descriptors::{RenderResourceTag, get_descriptor_index};
+use descriptors::{
+    DescriptorHandle, RenderResourceTag, allocate_descriptor_handle, get_descriptor_index,
+};
 use swapchain::{Swapchain, create_swapchain};
 
 pub const FRAMES_IN_FLIGHT: usize = 2;
@@ -51,7 +53,7 @@ pub struct Image {
 pub struct Buffer {
     pub buffer: vk::Buffer,
     pub address: vk::DeviceAddress,
-    pub handle: u32,
+    pub handle: DescriptorHandle,
     pub allocation: Allocation,
     pub size: vk::DeviceSize,
 }
@@ -579,7 +581,7 @@ impl Device {
         &self,
         buffer: ash::vk::Buffer,
         descriptor_type: vk::DescriptorType,
-    ) -> u32 {
+    ) -> DescriptorHandle {
         let descriptor = &self.descriptor;
 
         let info: [vk::DescriptorBufferInfo; 1] = [vk::DescriptorBufferInfo {
@@ -589,34 +591,32 @@ impl Device {
             range: vk::WHOLE_SIZE,
         }];
 
-        let (mut handle, tag) = match descriptor_type {
-            vk::DescriptorType::UNIFORM_BUFFER => (
-                descriptor.ubo_handle.lock().unwrap().add(),
-                RenderResourceTag::UniformBuffer,
-            ),
-            vk::DescriptorType::STORAGE_BUFFER => (
-                descriptor.ssbo_handle.lock().unwrap().add(),
-                RenderResourceTag::StorageBuffer,
-            ),
+        let handle = match descriptor_type {
+            vk::DescriptorType::UNIFORM_BUFFER => {
+                allocate_descriptor_handle(descriptor, RenderResourceTag::UniformBuffer)
+            }
+            vk::DescriptorType::STORAGE_BUFFER => {
+                allocate_descriptor_handle(descriptor, RenderResourceTag::StorageBuffer)
+            }
             _ => panic!("Currently support UBO / SSBO only"),
         };
 
-        let index = get_descriptor_index(tag);
+        let tag = handle.tag();
+
+        // dbg!(handle.handle());
+        // dbg!(tag);
 
         let write = [vk::WriteDescriptorSet::default()
-            .dst_set(descriptor.sets[index])
-            .dst_binding(tag as _) // This is fragile
+            .dst_set(descriptor.sets[0])
+            .dst_binding(tag as u32) // This is fragile
             .descriptor_type(descriptor_type)
-            .dst_array_element(handle)
+            .dst_array_element(handle.handle())
             .buffer_info(&info)
             .descriptor_count(1)];
 
         unsafe {
             self.device.update_descriptor_sets(&write, &[]);
         }
-
-        // Set resource type
-        handle |= (tag as u32) << 21;
 
         handle
     }
@@ -957,7 +957,7 @@ pub fn create_buffer(
 
     Buffer {
         buffer,
-        handle: u32::MAX,
+        handle: DescriptorHandle(u32::MAX),
         address: get_buffer_address(device, buffer),
         allocation,
         size,
