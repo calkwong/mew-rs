@@ -2,18 +2,22 @@ use ash::vk;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-/// Descriptor handles
-/// 6 | 2 | 3 | 21
-/// Version, DepthFlag, ImportFlag, RenderResourceTag, DescriptorHandle
+// Descriptor handles
+// 6 | 1 | 1 | 2 | 22
+// Version, DepthFlag, ImportFlag, RenderResourceTag, DescriptorHandle
+// This assumes we track Storage/Sampled images as the same resource and never track UBO in our rendergraph
 
-// Must be representable with 3 bits, otherwise amend how descriptor handles are constructed
-#[derive(Clone, Copy)]
 pub enum RenderResourceTag {
-    UniformBuffer = 0, // This is tied to binding slot of buffer descriptor set, DO NOT CHANGE!
-    StorageBuffer = 1, // This is tied to binding slot of buffer descriptor set, DO NOT CHANGE!
-    StorageImage = 2,
-    SampledImage = 3,
-    Sampler = 4,
+    Buffer,
+    Image,
+    Sampler,
+}
+
+pub enum DescriptorSetMapping {
+    Buffer,
+    StorageImage,
+    SampledImage,
+    Sampler,
 }
 
 /// Handle recycling not implemented
@@ -34,19 +38,20 @@ pub type ResourceTracker = Arc<Mutex<CountTracker>>;
 pub struct DescriptorHandle(pub u32);
 
 impl DescriptorHandle {
-    const HANDLE_MASK: u32 = (1u32 << 21) - 1;
-    const TAG_MASK: u32 = ((1u32 << 3) - 1) << 21;
+    const HANDLE_BITS: u32 = 22;
+    const HANDLE_MASK: u32 = (1u32 << Self::HANDLE_BITS) - 1;
+    const TAG_MASK: u32 = ((1u32 << 3) - 1) << Self::HANDLE_BITS;
 
     pub fn handle(&self) -> u32 {
         self.0 & Self::HANDLE_MASK
     }
 
     pub fn tag(&self) -> u32 {
-        (self.0 & Self::TAG_MASK) >> 21
+        (self.0 & Self::TAG_MASK) >> Self::HANDLE_BITS
     }
 
     pub fn set_tag(&mut self, tag: RenderResourceTag) {
-        self.0 |= (tag as u32) << 21;
+        self.0 |= (tag as u32) << Self::HANDLE_BITS;
     }
 }
 
@@ -89,36 +94,26 @@ impl Descriptor {
 // TODO: possibly move into backend?
 pub fn allocate_descriptor_handle(
     descriptor: &Descriptor,
-    tag: RenderResourceTag,
+    descriptor_type: vk::DescriptorType,
 ) -> DescriptorHandle {
-    let mut handle: DescriptorHandle = match tag {
-        RenderResourceTag::UniformBuffer => {
-            DescriptorHandle(descriptor.ubo_handle.lock().unwrap().add())
+    let (mut handle, tag) = match descriptor_type {
+        vk::DescriptorType::UNIFORM_BUFFER => {
+            (DescriptorHandle(descriptor.ubo_handle.lock().unwrap().add()), RenderResourceTag::Buffer)
         }
-        RenderResourceTag::StorageBuffer => {
-            DescriptorHandle(descriptor.ssbo_handle.lock().unwrap().add())
+        vk::DescriptorType::STORAGE_BUFFER => {
+            (DescriptorHandle(descriptor.ssbo_handle.lock().unwrap().add()), RenderResourceTag::Buffer)
         }
-        RenderResourceTag::SampledImage => {
-            DescriptorHandle(descriptor.image_handle.lock().unwrap().add())
+        vk::DescriptorType::SAMPLED_IMAGE => {
+            (DescriptorHandle(descriptor.image_handle.lock().unwrap().add()), RenderResourceTag::Image)
         }
-        RenderResourceTag::StorageImage => {
-            DescriptorHandle(descriptor.image_handle.lock().unwrap().add())
+        vk::DescriptorType::STORAGE_IMAGE => {
+            (DescriptorHandle(descriptor.image_handle.lock().unwrap().add()), RenderResourceTag::Image)
         }
         _ => panic!("Not implemented"),
     };
 
-    handle.set_tag(tag as _);
+    handle.set_tag(tag);
     handle
-}
-
-pub fn get_descriptor_set_index(tag: RenderResourceTag) -> usize {
-    match tag {
-        RenderResourceTag::UniformBuffer => 0,
-        RenderResourceTag::StorageBuffer => 0,
-        RenderResourceTag::StorageImage => 1,
-        RenderResourceTag::SampledImage => 2,
-        RenderResourceTag::Sampler => 3,
-    }
 }
 
 pub fn create_descriptor_pool(

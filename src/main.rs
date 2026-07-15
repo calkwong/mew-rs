@@ -1,6 +1,5 @@
 use ash::vk::{self, Fence};
 use glam::{Vec2, Vec4Swizzles};
-use mew::descriptors::RenderResourceTag;
 use mew::loader::load_gltf;
 use mew::rendergraph::{Pass, Rendergraph};
 use mew::swapchain::recreate_swapchain;
@@ -1006,12 +1005,12 @@ fn on_swapchain_resize(renderer: &mut Renderer) {
     renderer.backend.update_image_descriptor(
         renderer.framebuffer.draw_index,
         renderer.framebuffer.draw_image.view,
-        RenderResourceTag::StorageImage,
+        false,
     );
     renderer.backend.update_image_descriptor(
         renderer.framebuffer.depth_index,
         renderer.framebuffer.depth_image.view,
-        RenderResourceTag::SampledImage,
+        false,
     );
 
     for (index, view) in renderer
@@ -1022,13 +1021,13 @@ fn on_swapchain_resize(renderer: &mut Renderer) {
     {
         renderer
             .backend
-            .update_image_descriptor(*index, *view, RenderResourceTag::StorageImage);
+            .update_image_descriptor(*index, *view, false);
     }
 
     renderer.backend.update_image_descriptor(
         renderer.framebuffer.depth_pyramid_sample_index,
         renderer.framebuffer.depth_pyramid.view,
-        RenderResourceTag::SampledImage,
+        false,
     );
 
     // TODO: verify this is correct
@@ -1038,7 +1037,7 @@ fn on_swapchain_resize(renderer: &mut Renderer) {
         renderer.backend.update_image_descriptor(
             i + renderer.framebuffer.depth_pyramid_storage_index,
             *view,
-            RenderResourceTag::StorageImage,
+            true,
         );
     });
 }
