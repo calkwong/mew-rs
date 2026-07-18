@@ -9,7 +9,7 @@ use mew::{
     camera::{Camera, Key, KeyState},
     giga_barrier,
 };
-use mew::{occlusion_renderer, create_sampler};
+use mew::{create_sampler, push_constants};
 use std::time::Instant;
 use winit::{
     application::ApplicationHandler,
@@ -30,8 +30,6 @@ struct Renderer {
     frame_index: usize,
 
     scene_images: Vec<Image>,
-
-    occlusion_renderer: occlusion_renderer::OcclusionRenderer,
 
     copy_pipeline: vk::Pipeline,
     draw_pipeline: vk::Pipeline,
@@ -303,7 +301,10 @@ impl Renderer {
             (instances.len() * std::mem::size_of::<vk::DrawIndexedIndirectCommand>()) as u64,
         );
         // TODO: get a handle but don't actually register into descriptor?
-        draw_indirect_buffer.handle = backend.register_buffer(draw_indirect_buffer.buffer, vk::DescriptorType::STORAGE_BUFFER);
+        draw_indirect_buffer.handle = backend.register_buffer(
+            draw_indirect_buffer.buffer,
+            vk::DescriptorType::STORAGE_BUFFER,
+        );
 
         let mut dispatch_buffer = mew::create_buffer(
             device,
@@ -315,7 +316,8 @@ impl Renderer {
                 | vk::BufferUsageFlags::TRANSFER_DST,
             (3 * std::mem::size_of::<u32>()) as u64,
         );
-        dispatch_buffer.handle = backend.register_buffer(dispatch_buffer.buffer, vk::DescriptorType::STORAGE_BUFFER);
+        dispatch_buffer.handle =
+            backend.register_buffer(dispatch_buffer.buffer, vk::DescriptorType::STORAGE_BUFFER);
 
         let mut spd_buffer = mew::create_buffer(
             device,
@@ -324,7 +326,8 @@ impl Renderer {
             vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS | vk::BufferUsageFlags::STORAGE_BUFFER,
             (std::mem::size_of::<u32>()) as u64,
         );
-        spd_buffer.handle = backend.register_buffer(spd_buffer.buffer, vk::DescriptorType::STORAGE_BUFFER);
+        spd_buffer.handle =
+            backend.register_buffer(spd_buffer.buffer, vk::DescriptorType::STORAGE_BUFFER);
 
         Self {
             window,
@@ -333,7 +336,6 @@ impl Renderer {
             last_frame_time: None,
             frame_index: 0,
             scene_images: scene.images,
-            occlusion_renderer: occlusion_renderer::OcclusionRenderer::new(),
             copy_pipeline,
             draw_pipeline,
             cull_pipeline,
@@ -694,20 +696,6 @@ fn render_loop(renderer: &mut Renderer) {
         let p00 = proj.x_axis.x;
         let p11 = proj.y_axis.y;
 
-        renderer.occlusion_renderer.cull_constants = occlusion_renderer::CullConstants {
-            view,
-            mesh_buffer: renderer.mesh_buffer.address,
-            object_buffer: renderer.object_buffer.address,
-            draw_indirect_buffer: renderer.draw_indirect_buffer.address,
-            dispatch_buffer: renderer.dispatch_buffer.address,
-            planes,
-            p00,
-            p11,
-            near: renderer.camera.near,
-            far: renderer.camera.far,
-            count: renderables_count as u32,
-        };
-
         let group_count_x = mew::get_group_count(renderables_count as u32, 256);
 
         rdg.add_pass(
@@ -715,7 +703,19 @@ fn render_loop(renderer: &mut Renderer) {
             Pass::new_compute()
                 .write_buffer("draw_indirect", renderer.draw_indirect_buffer.handle)
                 .write_buffer("dispatch", renderer.dispatch_buffer.handle)
-                .constants(mew::push_constants_as_bytes(&renderer.occlusion_renderer.cull_constants))
+                .constants(push_constants::CullConstants {
+                    view,
+                    mesh_buffer: renderer.mesh_buffer.address,
+                    object_buffer: renderer.object_buffer.address,
+                    draw_indirect_buffer: renderer.draw_indirect_buffer.address,
+                    dispatch_buffer: renderer.dispatch_buffer.address,
+                    planes,
+                    p00,
+                    p11,
+                    near: renderer.camera.near,
+                    far: renderer.camera.far,
+                    count: renderables_count as u32,
+                })
                 .pipeline(renderer.cull_pipeline)
                 .dispatch(group_count_x, 1, 1),
         );
@@ -723,14 +723,6 @@ fn render_loop(renderer: &mut Renderer) {
 
     // Pass 2 - Rasterization
     {
-        renderer.occlusion_renderer.render_constants = occlusion_renderer::RenderConstants {
-            view_proj,
-            vertex_buffer: renderer.vertex_buffer.address,
-            mesh_buffer: renderer.mesh_buffer.address,
-            object_buffer: renderer.object_buffer.address,
-            material_buffer: renderer.material_buffer.address,
-        };
-
         // device.cmd_begin_query(
         //     cmd,
         //     frame_resource.pipeline_query,
@@ -755,7 +747,13 @@ fn render_loop(renderer: &mut Renderer) {
                     renderer.framebuffer.depth_index,
                     vk::AttachmentLoadOp::CLEAR,
                 )
-                .constants(mew::push_constants_as_bytes(&renderer.occlusion_renderer.render_constants))
+                .constants(push_constants::RenderConstants {
+                    view_proj,
+                    vertex_buffer: renderer.vertex_buffer.address,
+                    mesh_buffer: renderer.mesh_buffer.address,
+                    object_buffer: renderer.object_buffer.address,
+                    material_buffer: renderer.material_buffer.address,
+                })
                 .pipeline(renderer.draw_pipeline)
                 .draw_indirect(
                     renderer.draw_indirect_buffer.buffer,
@@ -781,15 +779,6 @@ fn render_loop(renderer: &mut Renderer) {
         let hiz_width = renderer.framebuffer.depth_pyramid.extent.width;
         let hiz_height = renderer.framebuffer.depth_pyramid.extent.height;
 
-        renderer.occlusion_renderer.depth_pyramid_constants =
-            occlusion_renderer::DepthPyramidConstants {
-                spd_buffer: renderer.spd_buffer.address,
-                rcp_resolution: Vec2::ONE / Vec2::new(width as _, height as _),
-                mips: hiz_width.max(hiz_height).ilog2() + 1,
-                num_wgs: group_count_x * group_count_y,
-                src_id: renderer.framebuffer.depth_index.handle(),
-                dst_id: renderer.framebuffer.depth_pyramid_storage_index.handle(),
-            };
         rdg.add_pass(
             "Build hi-z",
             Pass::new_compute()
@@ -804,9 +793,14 @@ fn render_loop(renderer: &mut Renderer) {
                     renderer.framebuffer.depth_pyramid_sample_index,
                 )
                 .write_buffer("spd", renderer.spd_buffer.handle)
-                .constants(mew::push_constants_as_bytes(
-                    &renderer.occlusion_renderer.depth_pyramid_constants,
-                ))
+                .constants(push_constants::DepthPyramidConstants {
+                    spd_buffer: renderer.spd_buffer.address,
+                    rcp_resolution: Vec2::ONE / Vec2::new(width as _, height as _),
+                    mips: hiz_width.max(hiz_height).ilog2() + 1,
+                    num_wgs: group_count_x * group_count_y,
+                    src_id: renderer.framebuffer.depth_index.handle(),
+                    dst_id: renderer.framebuffer.depth_pyramid_storage_index.handle(),
+                })
                 .pipeline(renderer.spd_pipeline)
                 .dispatch(group_count_x, group_count_y, 1),
         );
@@ -814,10 +808,6 @@ fn render_loop(renderer: &mut Renderer) {
 
     // Pass 3 - Copy to swapchain
     {
-        renderer.occlusion_renderer.tonemap_constants = occlusion_renderer::TonemapConstants {
-            src_id: renderer.framebuffer.draw_index.handle(),
-            dst_id: renderer.framebuffer.swapchain_indices[swapchain_idx].handle(),
-        };
         let group_count_x = mew::get_group_count(renderer.backend.swapchain.extent.width, 8);
         let group_count_y = mew::get_group_count(renderer.backend.swapchain.extent.height, 8);
         rdg.add_pass(
@@ -833,9 +823,10 @@ fn render_loop(renderer: &mut Renderer) {
                     renderer.backend.swapchain.images[swapchain_idx],
                     renderer.framebuffer.swapchain_indices[swapchain_idx],
                 )
-                .constants(mew::push_constants_as_bytes(
-                    &renderer.occlusion_renderer.tonemap_constants,
-                ))
+                .constants(push_constants::TonemapConstants {
+                    src_id: renderer.framebuffer.draw_index.handle(),
+                    dst_id: renderer.framebuffer.swapchain_indices[swapchain_idx].handle(),
+                })
                 .pipeline(renderer.copy_pipeline)
                 .dispatch(group_count_x, group_count_y, 1),
         );
@@ -1041,11 +1032,9 @@ fn on_swapchain_resize(renderer: &mut Renderer) {
         let view = &renderer.framebuffer.depth_pyramid_views[i as usize];
         let descriptor_handle = renderer.framebuffer.depth_pyramid_storage_index.handle() + i;
         let handle = DescriptorHandle(DescriptorHandle::TAG_MASK | descriptor_handle);
-        renderer.backend.update_image_descriptor(
-            handle,
-            *view,
-            true,
-        );
+        renderer
+            .backend
+            .update_image_descriptor(handle, *view, true);
     });
 }
 

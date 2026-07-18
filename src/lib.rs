@@ -21,7 +21,7 @@ use winit::{
 pub mod camera;
 pub mod descriptors;
 pub mod loader;
-pub mod occlusion_renderer;
+pub mod push_constants;
 pub mod rendergraph;
 pub mod swapchain;
 use descriptors::{
@@ -570,6 +570,8 @@ impl Device {
         }
     }
 
+    // TODO: Currently, this is tied to how we track buffer resources in the rendergraph. As a result,
+    // we may have holes in our buffer descriptor set. Ideally we get a handle without wasting actual descriptor slots.
     pub fn register_buffer(
         &self,
         buffer: ash::vk::Buffer,
@@ -1238,13 +1240,11 @@ pub fn get_infinite_reverse_perspective_matrix(fovy: f32, aspect: f32, near: f32
     matrix
 }
 
-// TODO: bytemuck?
 pub fn as_bytes<T>(t: &[T]) -> &[u8] {
     let len = size_of_val(t);
     unsafe { std::slice::from_raw_parts(t.as_ptr() as *const u8, len) }
 }
 
-// TODO: bytemuck?
 pub fn push_constants_as_bytes<T>(t: &T) -> &[u8] {
     unsafe { std::slice::from_raw_parts((t as *const T) as *const u8, std::mem::size_of::<T>()) }
 }

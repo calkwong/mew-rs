@@ -5,21 +5,21 @@
 use ash::vk;
 use std::{collections::HashMap, marker::PhantomData};
 
-use crate as mew;
+use crate::{self as mew, push_constants_as_bytes};
 use mew::Image;
 use mew::descriptors::DescriptorHandle;
 
-pub struct Rendergraph<'a> {
+pub struct Rendergraph {
     resource_to_id: HashMap<DescriptorHandle, usize>,
     resource_states: Vec<ResourceState>,
     dependencies: Vec<Vec<usize>>,
     execution_groups: Vec<Vec<usize>>,
     #[allow(clippy::type_complexity)]
-    executes: Vec<Box<dyn Fn(&ash::Device, vk::CommandBuffer, vk::PipelineLayout) + 'a>>,
+    executes: Vec<Box<dyn Fn(&ash::Device, vk::CommandBuffer, vk::PipelineLayout)>>,
     images: Vec<vk::Image>,
     depth_image: Option<vk::Image>,
     roots: Vec<usize>,
-    names: Vec<&'a str>, // For debugging
+    names: Vec<String>, // For debugging
 }
 
 struct ResourceState {
@@ -28,13 +28,13 @@ struct ResourceState {
     reads_since_last_write: Vec<usize>,
 }
 
-impl<'a> Default for Rendergraph<'a> {
+impl Default for Rendergraph {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<'a> Rendergraph<'a> {
+impl Rendergraph {
     pub fn new() -> Self {
         Self {
             resource_to_id: HashMap::new(),
@@ -52,7 +52,7 @@ impl<'a> Rendergraph<'a> {
     // Handles temporal resources.
     // TODO: We want to skip import on first frame (verify! may be resource specific) to we still get the initial
     // transition out of UNDEFINED layout.
-    pub fn import(&mut self, _name: &'a str, handle: DescriptorHandle) {
+    pub fn import(&mut self, handle: DescriptorHandle) {
         if self
             .resource_to_id
             .insert(handle, self.resource_states.len())
@@ -69,7 +69,7 @@ impl<'a> Rendergraph<'a> {
     }
 
     // TODO: delete if add_root_resource does not present any issues
-    pub fn add_root_pass<T>(&mut self, name: &'a str, pass: Pass<'a, T>) {
+    pub fn add_root_pass<T>(&mut self, name: &str, pass: Pass<T>) {
         self.roots.push(self.dependencies.len());
         self.add_pass(name, pass);
     }
@@ -91,8 +91,8 @@ impl<'a> Rendergraph<'a> {
     // The dependencies list built may contain duplicates, but dfs search ensures
     // we don't traverse the children of a node we have already visited via memoization.
     // If a texture resource is imported into the graph, it will not be pushed onto list of images for barrier transition.
-    pub fn add_pass<T>(&mut self, name: &'a str, pass: Pass<'a, T>) {
-        self.names.push(name);
+    pub fn add_pass<T>(&mut self, name: &str, pass: Pass<T>) {
+        self.names.push(String::from(name));
         let pass_id = self.dependencies.len();
         self.dependencies.push(Vec::new());
 
@@ -283,31 +283,31 @@ pub struct PassResource {
     image: Option<vk::Image>,
 }
 
-pub struct Pass<'a, T> {
+pub struct Pass<T> {
     reads: Vec<PassResource>,
     writes: Vec<PassResource>,
     pipeline: vk::Pipeline,
-    constants: &'a [u8],
+    constants: [u8; 256],
     #[allow(clippy::type_complexity)]
-    execute: Box<dyn Fn(&ash::Device, vk::CommandBuffer, vk::PipelineLayout) + 'a>,
+    execute: Box<dyn Fn(&ash::Device, vk::CommandBuffer, vk::PipelineLayout)>,
     render_pass: RenderPass,
     _marker: PhantomData<T>,
 }
 
-impl<'a, T> Pass<'a, T> {
+impl<T> Pass<T> {
     fn new(render_pass: RenderPass) -> Self {
         Self {
             reads: Vec::new(),
             writes: Vec::new(),
             pipeline: vk::Pipeline::null(),
-            constants: &[],
+            constants: [0u8; 256],
             execute: Box::new(|_, _, _| {}),
             render_pass,
             _marker: PhantomData,
         }
     }
 
-    pub fn read_buffer(mut self, _name: &'a str, handle: DescriptorHandle) -> Self {
+    pub fn read_buffer(mut self, _name: &str, handle: DescriptorHandle) -> Self {
         self.reads.push(PassResource {
             handle,
             image: None,
@@ -317,7 +317,7 @@ impl<'a, T> Pass<'a, T> {
 
     pub fn read_image(
         mut self,
-        _name: &'a str,
+        _name: &str,
         image: vk::Image,
         handle: DescriptorHandle,
     ) -> Self {
@@ -330,7 +330,7 @@ impl<'a, T> Pass<'a, T> {
 
     // This implicitly handles WAW
     // TODO: if we automate with fine grained barriers, reevaluate how our handling of WAW could affect access_mask; for a gigabarrier this is fine
-    pub fn write_buffer(mut self, _name: &'a str, handle: DescriptorHandle) -> Self {
+    pub fn write_buffer(mut self, _name: &str, handle: DescriptorHandle) -> Self {
         self.writes.push(PassResource {
             handle,
             image: None,
@@ -344,7 +344,7 @@ impl<'a, T> Pass<'a, T> {
 
     pub fn write_image(
         mut self,
-        _name: &'a str,
+        _name: &str,
         image: vk::Image,
         handle: DescriptorHandle,
     ) -> Self {
@@ -360,8 +360,9 @@ impl<'a, T> Pass<'a, T> {
         self
     }
 
-    pub fn constants(mut self, data: &'a [u8]) -> Self {
-        self.constants = data;
+    pub fn constants<U>(mut self, data: U) -> Self {
+        let bytes = push_constants_as_bytes(&data);
+        self.constants[..bytes.len()].copy_from_slice(bytes);
         self
     }
 
@@ -372,13 +373,14 @@ impl<'a, T> Pass<'a, T> {
 }
 
 // TODO: dispatch_indirect variant
+// TODO: storing any data here is quite redundant
 pub struct ComputePass {
     x: u32,
     y: u32,
     z: u32,
 }
 
-impl<'a> Pass<'a, ComputePass> {
+impl Pass<ComputePass> {
     pub fn new_compute() -> Self {
         Pass::new(RenderPass::Compute(ComputePass { x: 0, y: 0, z: 0 }))
     }
@@ -391,7 +393,7 @@ impl<'a> Pass<'a, ComputePass> {
 
         self.execute = Box::new(move |device, cmd, layout| unsafe {
             device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, self.pipeline);
-            device.cmd_push_constants(cmd, layout, vk::ShaderStageFlags::ALL, 0, self.constants);
+            device.cmd_push_constants(cmd, layout, vk::ShaderStageFlags::ALL, 0, &self.constants);
             device.cmd_dispatch(cmd, x, y, z);
         });
 
@@ -410,7 +412,7 @@ pub struct GraphicsPass {
     depth_target: Option<AttachmentDesc>,
 }
 
-impl<'a> Pass<'a, GraphicsPass> {
+impl Pass<GraphicsPass> {
     pub fn new_graphics() -> Self {
         Pass::new(RenderPass::Graphics(GraphicsPass {
             render_targets: Vec::new(),
@@ -420,7 +422,7 @@ impl<'a> Pass<'a, GraphicsPass> {
 
     pub fn render_target(
         mut self,
-        name: &'a str,
+        name: &str,
         image: &Image,
         handle: DescriptorHandle,
         load_op: vk::AttachmentLoadOp,
@@ -437,7 +439,7 @@ impl<'a> Pass<'a, GraphicsPass> {
 
     pub fn depth_target(
         mut self,
-        name: &'a str,
+        name: &str,
         image: &Image,
         handle: DescriptorHandle,
         load_op: vk::AttachmentLoadOp,
@@ -540,7 +542,7 @@ impl<'a> Pass<'a, GraphicsPass> {
             device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
             device.cmd_set_viewport(cmd, 0, &viewport);
             device.cmd_set_scissor(cmd, 0, &scissors);
-            device.cmd_push_constants(cmd, layout, vk::ShaderStageFlags::ALL, 0, self.constants);
+            device.cmd_push_constants(cmd, layout, vk::ShaderStageFlags::ALL, 0, &self.constants);
             device.cmd_bind_index_buffer(cmd, index_buffer, 0, vk::IndexType::UINT32);
             device.cmd_draw_indexed_indirect_count(
                 cmd,

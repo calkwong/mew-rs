@@ -1,22 +1,6 @@
 use ash::vk;
 use glam::{Mat4, Vec2};
 
-#[derive(Default)]
-pub struct OcclusionRenderer {
-    pub cull_constants: CullConstants,
-    pub render_constants: RenderConstants,
-    pub depth_pyramid_constants: DepthPyramidConstants,
-    pub tonemap_constants: TonemapConstants,
-}
-
-impl OcclusionRenderer {
-    pub fn new() -> Self {
-        Self {
-            ..Default::default()
-        }
-    }
-}
-
 #[repr(C)]
 #[derive(Default)]
 pub struct CullConstants {
@@ -60,7 +44,3 @@ pub struct TonemapConstants {
     pub src_id: u32,
     pub dst_id: u32,
 }
-
-// TODO:
-// - set up renderpasses here and call it from main?
-// - cleaner way of filling push constants?
